@@ -1,2 +1,11 @@
-data/raw/
-data/processed/
+# Ignore extracted datasets
+data/raw/*
+data/processed/*
+
+# Keep folder structure
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Keep archives
+!data/archives/
+!data/archives/OpenSSH.zip
