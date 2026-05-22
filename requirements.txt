@@ -1,0 +1,13 @@
+pyspark
+sentence-transformers
+torch
+psycopg[binary,pool]
+pgvector
+pandas
+numpy
+scikit-learn
+tqdm
+python-dotenv
+matplotlib
+jupyter
+ipykernel

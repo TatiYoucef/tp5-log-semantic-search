@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: tp5_pgvector
+    environment:
+      POSTGRES_USER: tp5
+      POSTGRES_PASSWORD: tp5pass
+      POSTGRES_DB: logsdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - tp5_pgdata:/var/lib/postgresql/data
+
+volumes:
+  tp5_pgdata:
