@@ -1,0 +1,443 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\geometry{margin=2.4cm}
+\hypersetup{colorlinks=true, linkcolor=black, urlcolor=blue}
+\setlength{\parskip}{0.45em}
+\setlength{\parindent}{0pt}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+  backgroundcolor=\color{gray!8}
+}
+
+\begin{document}
+
+\pagenumbering{gobble}
+\begin{titlepage}
+  \centering
+  {\Large ESI -- \'{E}cole nationale Sup\'erieure d'Informatique\par}
+  \vspace{1.8cm}
+  {\Huge\bfseries Moteur de recherche s\'emantique et analytique sur des logs massifs Big Data\par}
+  \vspace{1cm}
+  {\Large Rapport technique -- TP5\par}
+  \vfill
+  \begin{tabular}{ll}
+    Etudiants & Tati Youcef -- \texttt{my\_tati@esi.dz}\\
+              & Mostefai Mounir Sofiane -- \texttt{mm\_mostefai@esi.dz}\\
+    Encadrante & Ens. Amrouche Karima -- \texttt{k\_amrouche@esi.dz}\\
+  \end{tabular}
+  \vfill
+  {\large Ann\'ee universitaire 2025--2026\par}
+\end{titlepage}
+
+\pagenumbering{roman}
+\tableofcontents
+\newpage
+\pagenumbering{arabic}
+
+\section{Introduction}
+
+Les infrastructures modernes produisent des volumes importants de journaux d'execution. Dans un
+systeme distribue, ces journaux proviennent de machines, services, processus et utilisateurs
+differents. Leur exploitation par recherche textuelle simple reste limitee : une meme panne peut
+etre formulee par plusieurs messages proches, et une requete par mot-cle peut ignorer des logs
+pertinents lorsque les termes exacts ne sont pas presents.
+
+Ce projet realise une plateforme Big Data capable d'ingerer un grand volume de logs, de les
+structurer avec Apache Spark, de transformer les messages en vecteurs semantiques, de stocker ces
+vecteurs dans PostgreSQL avec pgvector, puis de fournir des fonctions de recherche et d'analyse.
+L'objectif n'est pas seulement de lancer un modele d'embedding, mais de construire une chaine
+complete, reproductible et demonstrable.
+
+Les livrables couverts sont le code source documente, un pipeline Big Data fonctionnel, une base
+vectorielle indexee, un rapport technique et une interface web professionnelle. La solution reste
+entierement open source et respecte les technologies imposees : Python, Apache Spark, PostgreSQL,
+pgvector et Sentence-Transformers.
+
+\section{Jeu de donnees}
+
+Le dataset choisi est OpenSSH de LogHub-2.0. Il contient 638 947 entrees brutes dans l'extraction locale, ce qui depasse le
+seuil de 500 000 entrees textuelles demande dans le sujet. Le depot local contient trois fichiers
+principaux :
+
+\begin{longtable}{p{0.42\linewidth}p{0.46\linewidth}}
+\toprule
+Fichier & Role\\
+\midrule
+\texttt{OpenSSH\_full.log} & Logs bruts au format syslog, avec mois, jour, heure, hote, service et message.\\
+\texttt{OpenSSH\_full.log\_structured.csv} & Version structuree fournie par LogHub : identifiant de ligne, contenu, identifiant d'evenement et template.\\
+\texttt{OpenSSH\_full.log\_templates.csv} & Liste des templates d'evenements et leurs occurrences.\\
+\bottomrule
+\end{longtable}
+
+Un exemple de ligne brute est :
+
+\begin{lstlisting}
+Dec 10 06:55:48 LabSZ sshd[24200]: Failed password for invalid user webmaster from 173.234.31.186 port 38926 ssh2
+\end{lstlisting}
+
+La version structuree separe le contenu metier du prefixe syslog. Elle fournit aussi un
+\texttt{EventId} et un \texttt{EventTemplate}. Ces templates sont importants car ils reduisent le
+bruit des valeurs variables comme adresses IP, ports, noms d'utilisateurs et identifiants de
+processus.
+
+\section{Architecture generale}
+
+L'architecture suit une chaine batch classique adaptee a un contexte Big Data :
+
+\begin{lstlisting}
+Logs OpenSSH
+  -> Pretraitement Spark
+  -> CSV/Parquet traites
+  -> PostgreSQL + pgvector
+  -> API FastAPI
+  -> Interface Streamlit
+\end{lstlisting}
+
+Spark est utilise pour charger les fichiers volumineux, parser les prefixes syslog, joindre le log
+brut avec le CSV structure, normaliser les messages et produire des sorties persistantes. PostgreSQL
+stocke les logs nettoyes et une table vectorielle des messages normalises distincts. pgvector ajoute
+le type \texttt{vector(384)} et l'index HNSW pour la recherche approximative de voisins proches.
+FastAPI expose les fonctionnalites sous
+forme d'API HTTP, et Streamlit fournit la demonstration interactive.
+
+La separation entre pipeline, base, API et interface rend le projet reproductible : le pipeline peut
+etre lance en ligne de commande, l'API peut etre testee seule, et l'interface consomme uniquement les
+endpoints publics.
+
+\section{Pretraitement Big Data}
+
+La commande \texttt{tp5-log-search prepare-data} execute le pretraitement Spark. Le traitement lit le
+fichier brut, associe un numero de ligne, puis joint ce flux avec le CSV structure par
+\texttt{LineId}. Cette strategie permet de conserver les informations temporelles du log brut et les
+templates fournis par LogHub.
+
+Les champs extraits sont :
+
+\begin{itemize}
+  \item \texttt{line\_id}, identifiant stable de la ligne ;
+  \item \texttt{log\_timestamp}, timestamp reconstruit avec une annee configurable ;
+  \item \texttt{host}, \texttt{service}, \texttt{process\_id} ;
+  \item \texttt{level}, niveau heuristique : INFO, WARNING, ERROR ou CRITICAL ;
+  \item \texttt{raw\_message}, message original ;
+  \item \texttt{normalized\_message}, message normalise vectorise ;
+  \item \texttt{event\_id} et \texttt{event\_template}.
+\end{itemize}
+
+Le fichier OpenSSH ne contient pas l'annee. Pour permettre les analyses temporelles, le pipeline
+utilise une variable \texttt{LOG\_YEAR}, fixee par defaut a 2024. Cette hypothese est explicite,
+configurable et ne modifie pas l'ordre relatif des evenements.
+
+Le resultat est ecrit sous deux formats. Le CSV sert au chargement rapide dans PostgreSQL avec
+\texttt{COPY}. Le Parquet conserve une sortie analytique compacte et partitionnee par niveau de log,
+utile pour des analyses Spark supplementaires.
+
+\section{Schema de stockage}
+
+Le schema relationnel est centre sur trois tables :
+
+\begin{longtable}{p{0.25\linewidth}p{0.65\linewidth}}
+\toprule
+Table & Description\\
+\midrule
+\texttt{event\_templates} & Dictionnaire des templates LogHub et nombre d'occurrences annonce.\\
+\texttt{log\_entries} & Lignes de logs nettoyees, metadonnees temporelles, niveau et message.\\
+\texttt{message\_embeddings} & Messages normalises distincts, occurrences et vecteurs semantiques indexes.\\
+\texttt{pipeline\_runs} & Trace d'execution du pipeline complet.\\
+\bottomrule
+\end{longtable}
+
+La colonne vectorielle principale est stockee dans \texttt{message\_embeddings} :
+
+\begin{lstlisting}
+embedding VECTOR(384)
+\end{lstlisting}
+
+La dimension 384 correspond au modele \texttt{sentence-transformers/all-MiniLM-L6-v2}. Les index
+relationnels couvrent le niveau, le temps, l'evenement et la recherche textuelle par trigrammes. La
+recherche semantique repose sur :
+
+\begin{lstlisting}
+CREATE INDEX message_embeddings_embedding_hnsw_idx
+ON message_embeddings USING hnsw (embedding vector_cosine_ops);
+\end{lstlisting}
+
+L'index HNSW est adapte a la recherche de similarite a grande echelle car il evite un parcours
+sequentiel complet pour chaque requete. La distance utilisee est le cosinus, coherente avec les
+embeddings normalises.
+
+\section{Details d'implementation}
+
+Le code source est organise comme un package Python installable. Cette organisation evite les
+scripts isoles difficiles a maintenir et donne une structure proche d'un projet professionnel. Les
+modules principaux sont separes par responsabilite : configuration, pretraitement Spark, acces base
+de donnees, embeddings, recherche, analytique, API, interface et CLI.
+
+Le module de configuration lit les variables d'environnement depuis \texttt{.env}. Les chemins sont
+resolus relativement a la racine du depot afin que les commandes fonctionnent depuis n'importe quel
+repertoire. Les valeurs par defaut pointent vers le dataset OpenSSH deja extrait dans
+\texttt{data/raw/OpenSSH}.
+
+Le module Spark evite de supposer que le CSV structure contient toutes les informations utiles. Il
+reconstruit les metadonnees systeme depuis le log brut, puis joint ces informations avec les
+templates LogHub. Cette decision conserve a la fois la richesse temporelle du fichier brut et la
+qualite du parsing fourni par LogHub.
+
+Le chargement PostgreSQL utilise \texttt{COPY} plutot que des insertions ligne par ligne. Pour un
+dataset de plusieurs centaines de milliers de lignes, cette difference est importante : \texttt{COPY}
+reduira le temps de chargement et limite la charge cote client Python. Les commandes peuvent etre
+relancees car le pipeline initialise le schema puis recharge les tables applicatives de maniere
+deterministe.
+
+La recherche semantique est encapsulee dans un module dedie. L'API et l'interface n'ont donc pas a
+connaitre les details SQL de pgvector. Cette separation facilite les tests et permettrait de changer
+le modele d'embedding ou la base vectorielle sans reecrire l'interface.
+
+\section{Choix de conception}
+
+Plusieurs choix ont ete faits pour concilier exigences academiques, performance locale et clarte de
+demonstration. Le premier choix est d'utiliser PostgreSQL comme base unique pour les donnees
+relationnelles et vectorielles. Cette approche simplifie l'exploitation : les filtres temporels,
+niveaux de severite, templates et vecteurs sont interroges dans le meme systeme.
+
+Le deuxieme choix est de vectoriser les messages normalises plutot que chaque message brut
+independamment. Sur un dataset de logs structures, les templates representent le sens operationnel
+des evenements, tandis que les valeurs variables representent souvent des parametres. Cette
+vectorisation rend les groupes d'erreurs plus stables et accelere fortement l'indexation.
+
+Le troisieme choix est de conserver une recherche par mots-cles. Elle ne remplace pas la recherche
+semantique, mais elle reste pertinente pour des investigations precises. Par exemple, une adresse IP
+ou un port doit etre retrouve lexicalement. La comparaison entre les deux methodes montre donc leur
+complementarite.
+
+Le dernier choix est de fournir une API en plus de l'interface. Une interface Streamlit seule aurait
+ete plus rapide a ecrire, mais moins propre architecturalement. Avec FastAPI, la demonstration web,
+les tests et d'eventuels clients externes consomment le meme contrat.
+
+\section{Vectorisation}
+
+La vectorisation est realisee avec Sentence-Transformers. La commande
+\texttt{tp5-log-search embed} charge le modele, recupere les messages normalises distincts non encore
+vectorises, calcule les embeddings par lots, puis les insere dans la table \texttt{message\_embeddings}.
+
+Cette approche est volontaire. Dans OpenSSH, beaucoup de lignes partagent le meme template. Calculer
+et stocker un embedding duplique pour chaque ligne brute gaspillerait du temps CPU et de l'espace
+disque sans ajouter beaucoup de signal semantique. En vectorisant les templates normalises, les
+638 947 logs restent recherchables par jointure avec une table vectorielle compacte et indexee.
+
+Les vecteurs sont normalises cote modele. La similarite retournee par l'API est :
+
+\begin{lstlisting}
+1 - (embedding <=> query_embedding)
+\end{lstlisting}
+
+ou \texttt{<=>} est l'operateur de distance cosinus de pgvector.
+
+\section{Recherche et analyse}
+
+La plateforme expose quatre familles de fonctionnalites.
+
+\subsection{Recherche semantique}
+
+L'utilisateur formule une requete en langage naturel, par exemple :
+
+\begin{lstlisting}
+brute force ssh authentication failure
+\end{lstlisting}
+
+Le systeme vectorise cette requete, interroge pgvector et retourne les logs les plus proches. Cette
+recherche peut retrouver des messages pertinents meme si les mots exacts ne sont pas presents.
+
+\subsection{Recherche par mots-cles}
+
+La recherche par mots-cles utilise \texttt{ILIKE} et l'index trigramme. Elle sert de baseline pour
+comparer les resultats avec la recherche semantique. Cette comparaison est utile pedagogiquement,
+car elle montre les limites d'une recherche lexicale stricte sur des logs variables.
+
+\subsection{Logs similaires}
+
+L'endpoint \texttt{/logs/\{id\}/similar} recupere le vecteur d'un log deja indexe, puis cherche ses
+voisins les plus proches. Ce cas pratique repond directement a la consigne : retrouver tous les logs
+similaires a une erreur critique donnee.
+
+\subsection{Analytique}
+
+Les groupes d'erreurs frequentes sont calcules par agregation sur \texttt{event\_id},
+\texttt{event\_template} et \texttt{level}. L'evolution temporelle agr\`ege les logs par heure ou par
+jour. Lorsqu'une requete semantique est fournie, le systeme identifie d'abord les evenements les plus
+proches, puis calcule leur evolution sur l'ensemble de la base.
+
+\section{Interface de demonstration}
+
+L'interface Streamlit est organisee en quatre onglets : recherche, comparaison, logs similaires et
+analytique. Elle consomme l'API FastAPI et n'accede jamais directement a la base. Cette separation
+est importante pour garder une architecture claire et testable.
+
+La page d'accueil affiche les indicateurs principaux : nombre total de logs, nombre de logs
+vectorises, nombre d'evenements et presence de l'index HNSW. Les tableaux de resultats affichent les
+identifiants de logs, timestamps, niveaux, evenements, similarites et messages bruts. Les analyses
+recurrences et temporelles utilisent des graphiques Plotly.
+
+\section{Reproductibilite}
+
+Le projet est pilote par une CLI unique :
+
+\begin{lstlisting}
+tp5-log-search prepare-data
+tp5-log-search init-db
+tp5-log-search load-db
+tp5-log-search embed
+tp5-log-search index
+tp5-log-search stats
+\end{lstlisting}
+
+Pour une demonstration rapide, l'option \texttt{--limit} permet de traiter un sous-ensemble :
+
+\begin{lstlisting}
+tp5-log-search run-pipeline --limit 10000
+\end{lstlisting}
+
+Pour la livraison finale, la commande sans limite traite les 638 947 logs :
+
+\begin{lstlisting}
+tp5-log-search run-pipeline
+\end{lstlisting}
+
+La configuration est centralisee dans \texttt{.env}. Les chemins du dataset, l'URL PostgreSQL, le
+modele d'embedding, l'annee de log et les tailles de batch sont modifiables sans changer le code.
+
+\section{API applicative}
+
+L'API FastAPI constitue le contrat applicatif entre la base vectorielle et les clients. Elle a ete
+concue pour exposer des operations simples, chacune correspondant a un besoin du sujet. La table
+suivante resume les endpoints principaux.
+
+\begin{longtable}{p{0.30\linewidth}p{0.58\linewidth}}
+\toprule
+Endpoint & Fonction\\
+\midrule
+\texttt{GET /health} & Verification de disponibilite de l'API.\\
+\texttt{GET /stats} & Statistiques globales : logs, vecteurs, evenements, periode, index.\\
+\texttt{POST /search/semantic} & Recherche par similarite vectorielle a partir d'une requete libre.\\
+\texttt{POST /search/keyword} & Recherche lexicale par mots-cles pour comparaison.\\
+\texttt{POST /search/compare} & Retour simultane des resultats semantiques et lexicaux.\\
+\texttt{GET /logs/\{id\}/similar} & Voisins semantiques d'un log deja stocke.\\
+\texttt{GET /analytics/frequent-errors} & Groupes d'erreurs les plus frequents.\\
+\texttt{GET /analytics/timeline} & Evolution temporelle par requete, evenement ou niveau.\\
+\bottomrule
+\end{longtable}
+
+Le chargement du modele d'embedding est mis en cache cote API. Sans ce cache, chaque requete
+semantique rechargerait le modele depuis le disque, ce qui augmenterait fortement la latence. Le
+cache garde un seul objet \texttt{EmbeddingService} par processus FastAPI.
+
+Les requetes applicatives acceptent un parametre \texttt{top\_k}. Celui-ci borne le nombre de
+resultats retournes afin d'eviter des reponses trop volumineuses. Les filtres par niveau permettent
+de limiter la recherche a des logs critiques, erreurs, avertissements ou informations.
+
+\section{Scenario de demonstration}
+
+Une demonstration complete peut etre realisee en quatre temps. D'abord, l'enseignant ou
+l'utilisateur lance PostgreSQL avec Docker Compose et execute le pipeline limite pour verifier le
+fonctionnement sur un echantillon. Ensuite, il lance l'API et l'interface Streamlit. L'interface
+affiche immediatement les statistiques de la base et la presence de l'index.
+
+Le premier cas pratique consiste a chercher une erreur critique. Une requete comme
+\texttt{possible break in ssh server} retourne les logs du template
+\texttt{POSSIBLE BREAK-IN ATTEMPT}. Le resultat prouve que la recherche n'est pas limitee a une
+correspondance exacte des mots.
+
+Le deuxieme cas pratique porte sur les erreurs frequentes. L'onglet analytique affiche les groupes
+dominants : echecs de mot de passe, utilisateurs invalides, fermetures de connexion et echecs
+d'authentification PAM. Ces groupes correspondent aux evenements recenses dans LogHub et donnent une
+vision synthetique du comportement du service SSH.
+
+Le troisieme cas pratique analyse l'evolution temporelle. A partir d'une requete semantique,
+l'application identifie les evenements proches puis agrege leurs occurrences par jour ou par heure.
+Cette vue permet de reperer des periodes de forte activite suspecte, par exemple une concentration
+d'echecs d'authentification.
+
+Enfin, l'onglet comparaison affiche cote a cote la recherche semantique et la recherche par
+mots-cles. Cette comparaison illustre l'interet des embeddings : la recherche semantique peut
+retrouver des messages proches meme lorsque le vocabulaire exact differe, tandis que la recherche
+par mots-cles reste utile pour des termes precis comme une adresse IP ou un nom d'utilisateur.
+
+\section{Evaluation attendue}
+
+L'evaluation du projet combine des criteres fonctionnels, techniques et pedagogiques. Sur le plan
+fonctionnel, le systeme doit charger les donnees, remplir la base, vectoriser les logs et retourner
+des resultats pertinents depuis l'interface. Sur le plan technique, le pipeline doit etre
+reproductible, le schema doit contenir une colonne vectorielle indexee, et les commandes doivent
+etre documentees.
+
+La qualite des resultats se verifie qualitativement. Pour une requete sur les echecs de mot de
+passe, les premiers resultats doivent appartenir aux templates \texttt{Failed password} ou
+\texttt{authentication failure}. Pour une requete sur les tentatives d'intrusion, les resultats
+doivent faire apparaitre les messages de type \texttt{POSSIBLE BREAK-IN ATTEMPT} ou utilisateurs
+invalides. Pour les analyses frequentes, les evenements les plus representes doivent correspondre
+aux occurrences indiquees par LogHub.
+
+La performance depend de la machine. Le pretraitement Spark du dataset complet reste raisonnable sur
+un poste local. La vectorisation par templates distincts reduit fortement le temps de calcul, car
+elle evite de traiter plusieurs centaines de milliers de messages quasi identiques. La recherche
+pgvector avec HNSW permet ensuite une latence compatible avec une demonstration interactive.
+
+\section{Tests et validation}
+
+Les tests unitaires valident le parsing OpenSSH, la normalisation des messages, la classification de
+niveau, la conversion des vecteurs au format pgvector et le parsing de la CLI. Les tests
+d'integration se font avec le pipeline limite, car ils impliquent Spark, PostgreSQL et le modele
+d'embedding.
+
+Les criteres d'acceptation sont :
+
+\begin{itemize}
+  \item le pretraitement Spark produit les sorties CSV et Parquet ;
+  \item PostgreSQL contient les logs et templates charges ;
+  \item la table \texttt{message\_embeddings} couvre les messages normalises distincts ;
+  \item l'index HNSW existe sur la table \texttt{message\_embeddings} ;
+  \item une requete semantique retourne des messages OpenSSH coherents ;
+  \item la comparaison mots-cles/semantique retourne deux listes distinctes ;
+  \item l'interface web communique avec l'API locale ;
+  \item le rapport compile en PDF avec LaTeX.
+\end{itemize}
+
+\section{Limites et ameliorations}
+
+Le dataset OpenSSH ne contient pas l'annee dans le timestamp. L'annee configuree est donc une
+hypothese technique pour permettre les analyses temporelles. Une extension possible serait de
+croiser les logs avec une source externe contenant l'annee exacte.
+
+La vectorisation par template est efficace et adaptee au dataset LogHub. Pour un environnement de
+production avec des messages plus varies, on pourrait combiner deux niveaux de vecteurs : un vecteur
+de template pour le regroupement et un vecteur de message brut pour la recherche fine.
+
+Enfin, l'index HNSW privilegie la vitesse de recherche. Pour certaines evaluations, une recherche
+exacte sans index pourrait servir de reference afin de mesurer le compromis entre performance et
+rappel.
+
+\section{Conclusion}
+
+Le projet livre une chaine complete de recherche semantique et analytique sur logs massifs. Spark
+assure le traitement batch, PostgreSQL et pgvector fournissent la base vectorielle indexee,
+Sentence-Transformers apporte la representation semantique, FastAPI expose les fonctionnalites et
+Streamlit fournit la demonstration.
+
+La solution couvre les cas pratiques demandes : retrouver les logs similaires a une erreur critique,
+identifier les groupes d'erreurs frequentes, analyser leur evolution temporelle et comparer la
+recherche semantique avec une recherche par mots-cles. Elle reste modulaire, reproductible et
+adaptable a d'autres jeux de logs.
+
+\end{document}

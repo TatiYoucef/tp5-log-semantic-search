@@ -1,150 +1,125 @@
-# Semantic and Analytical Search on Large-Scale Logs
+# TP5 - Recherche Semantique et Analytique sur Logs Massifs
 
-A Big Data project focused on semantic search, vector embeddings, and large-scale log analysis using modern open-source technologies.
+Projet Big Data en Python pour ingerer, normaliser, vectoriser et interroger les logs OpenSSH de LogHub-2.0. Le dataset local contient 638 947 entrees brutes, un CSV structure et les templates d'evenements.
 
-The objective of this repository is to build a complete pipeline capable of processing massive system logs, transforming them into vector embeddings, storing them in a vector database, and performing semantic and analytical queries on top of them.
-
-The project is based on the OpenSSH dataset from Loghub-2.0, containing approximately 638,000 log entries. ([GitHub][1])
-
----
-
-## Project Goals
-
-This project aims to:
-
-* Process large-scale log datasets using Apache Spark
-* Normalize and structure raw logs
-* Generate semantic embeddings from log messages
-* Store embeddings inside PostgreSQL with pgvector
-* Perform semantic similarity search on logs
-* Detect recurring errors and similar patterns
-* Compare semantic search with traditional keyword-based search
-* Analyze temporal evolution of similar log events
-
----
-
-## Dataset
-
-Current dataset:
-
-* OpenSSH logs from Loghub-2.0
-* ~638,946 raw log lines
-* Structured CSV and templates included
-
-Dataset source:
-
-* [Loghub-2.0 Repository](https://github.com/logpai/loghub-2.0?utm_source=chatgpt.com)
-
-Research references:
-
-* A Large-Scale Evaluation for Log Parsing Techniques: How Far Are We?
-* Loghub: A Large Collection of System Log Datasets for AI-driven Log Analytics
-
----
-
-## Planned Architecture
+## Architecture
 
 ```text
-Raw Logs
-   ↓
-Apache Spark Preprocessing
-   ↓
-Cleaning & Normalization
-   ↓
-Batch Embedding Generation
-   ↓
-PostgreSQL + pgvector
-   ↓
-Semantic Search & Analytics
+data/raw/OpenSSH
+   -> Spark preprocessing
+   -> data/processed/*.csv + *.parquet
+   -> PostgreSQL + pgvector
+   -> FastAPI
+   -> Streamlit
 ```
 
----
+Technologies imposees et utilisees : Python, Apache Spark, PostgreSQL, pgvector, Sentence-Transformers. L'interface de demonstration repose sur FastAPI et Streamlit.
 
-## Technologies
+## Installation
 
-The following technologies will be used throughout the project:
+```bash
+./setup.sh
+docker compose up -d
+source ~/Desktop/Old_ESI/Python/venv/bin/activate
+```
 
-* Python
-* Apache Spark
-* PostgreSQL
-* pgvector
-* Sentence-Transformers
-* Docker & Docker Compose
+Le script utilise par defaut le venv existant `~/Desktop/Old_ESI/Python/venv`; il ne cree pas de nouvel environnement. Installation manuelle equivalente :
 
----
+```bash
+source ~/Desktop/Old_ESI/Python/venv/bin/activate
+python -m pip install -r requirements.txt
+python -m pip install -e .
+cp -n .env.example .env
+```
 
-## Repository Structure
+## Pipeline complet
+
+Execution rapide sur echantillon :
+
+```bash
+tp5-log-search run-pipeline --limit 10000
+```
+
+Execution complete sur les 638 947 logs :
+
+```bash
+tp5-log-search run-pipeline
+```
+
+Etapes separees :
+
+```bash
+tp5-log-search prepare-data
+tp5-log-search init-db
+tp5-log-search load-db
+tp5-log-search embed
+tp5-log-search index
+tp5-log-search stats
+```
+
+La commande `embed` vectorise les messages normalises distincts avec `sentence-transformers/all-MiniLM-L6-v2` dans la table `message_embeddings`. Les logs massifs restent dans `log_entries` et sont relies aux vecteurs par `normalized_message`, ce qui evite de dupliquer le meme vecteur des milliers de fois.
+
+## API et interface
+
+Lancer l'API :
+
+```bash
+tp5-log-search serve-api --host 127.0.0.1 --port 8000
+```
+
+Lancer l'interface web :
+
+```bash
+tp5-log-search serve-web --port 8501
+```
+
+Endpoints principaux :
 
 ```text
-.
-├── data
-│   ├── processed
-│   └── raw
-│       └── OpenSSH
-│
-├── notebooks
-├── reports
-├── sql
-│   └── schema.sql
-│
-├── src   
-│
-├── docker-compose.yml
-├── requirements.txt
-└── README.md
+GET  /health
+GET  /stats
+POST /search/semantic
+POST /search/keyword
+POST /search/compare
+GET  /logs/{id}/similar
+GET  /analytics/frequent-errors
+GET  /analytics/timeline
 ```
 
----
+## Structure
 
-## Planned Features
+```text
+src/tp5_log_search/
+  api.py             API FastAPI
+  analytics.py       analyses recurrentes et temporelles
+  cli.py             commandes reproductibles
+  config.py          configuration .env
+  db.py              PostgreSQL, COPY, index pgvector
+  embeddings.py      Sentence-Transformers
+  search.py          recherche semantique et mots-cles
+  spark_pipeline.py  preprocessing Spark
+  text.py            parsing et normalisation OpenSSH
+  web_app.py         interface Streamlit
 
-### Phase 1 — Big Data Pipeline Design
+sql/schema.sql       schema PostgreSQL + pgvector
+reports/             rapport LaTeX
+tests/               tests unitaires
+```
 
-* Dataset exploration
-* Log format analysis
-* Storage schema design
-* Pipeline architecture definition
+## Rapport
 
-### Phase 2 — Large-Scale Ingestion & Processing
+Compiler le rapport technique :
 
-* Distributed log ingestion with Spark
-* Cleaning and normalization
-* Data partitioning strategies
-* Batch processing pipeline
+```bash
+tp5-log-search build-report
+```
 
-### Phase 3 — Embeddings & Vector Indexing
+Le PDF attendu est `reports/rapport_tp5.pdf`.
 
-* Semantic embedding generation
-* Batch vector insertion
-* Similarity indexing with pgvector
-* Embedding evaluation
+## Tests
 
-### Phase 4 — Semantic Search & Analytics
+```bash
+pytest
+```
 
-* Semantic log retrieval
-* Similar log detection
-* Frequent error grouping
-* Temporal error evolution analysis
-* Comparison against keyword-based search
-
----
-
-## Planned Use Cases
-
-The final system should support queries such as:
-
-* Retrieve logs similar to a critical error
-* Detect recurring system failures
-* Group semantically related log messages
-* Analyze the evolution of similar errors over time
-* Search logs using natural language
-
----
-
-## Notes
-
-The project is designed for educational and research purposes in the context of Big Data systems, semantic search, and AI-driven log analytics.
-
-The implementation will prioritize scalability, modularity, and reproducibility.
-
-[1]: https://github.com/logpai/loghub-2.0?utm_source=chatgpt.com "GitHub - logpai/loghub-2.0: A Large-scale Evaluation for Log Parsing Techniques: How Far are We? [ISSTA'24] · GitHub"
+Les tests unitaires couvrent le parsing OpenSSH, la normalisation, la classification de niveau, la conversion pgvector et le parsing CLI. Les tests d'integration se valident via `run-pipeline --limit 10000`.

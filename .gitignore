@@ -9,3 +9,25 @@ data/processed/*
 # Keep archives
 !data/archives/
 !data/archives/OpenSSH.zip
+
+# Other
+TP5*.md
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Local configuration and generated reports
+.env
+reports/*.aux
+reports/*.fdb_latexmk
+reports/*.fls
+reports/*.log
+reports/*.out
+reports/*.toc
+reports/*.synctex.gz
+logs/
