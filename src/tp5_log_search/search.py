@@ -40,22 +40,37 @@ def semantic_search(
     embedder = embedder or EmbeddingService(settings.model_name)
     query_vector = embedder.encode_one(query)
 
-    where: list[str] = []
-    params: list[Any] = [query_vector, query_vector, max(top_k, 20)]
+    candidate_filters = ["me.embedding IS NOT NULL"]
+    result_filters: list[str] = []
+    params: list[Any] = [query_vector, query_vector]
     if level and level != "ALL":
-        where.append("le.level = %s")
+        candidate_filters.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM log_entries le_filter
+                WHERE le_filter.normalized_message = me.normalized_message
+                    AND le_filter.level = %s
+            )
+            """
+        )
+        params.append(level)
+        result_filters.append("le.level = %s")
+    params.append(max(top_k, 20))
+    if level and level != "ALL":
         params.append(level)
     params.append(top_k)
-    where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+    candidate_where_clause = " AND ".join(candidate_filters)
+    result_where_clause = f"WHERE {' AND '.join(result_filters)}" if result_filters else ""
 
     sql = f"""
         WITH matches AS (
             SELECT
-                normalized_message,
-                1 - (embedding <=> %s::vector) AS similarity,
-                embedding <=> %s::vector AS distance
-            FROM message_embeddings
-            WHERE embedding IS NOT NULL
+                me.normalized_message,
+                1 - (me.embedding <=> %s::vector) AS similarity,
+                me.embedding <=> %s::vector AS distance
+            FROM message_embeddings me
+            WHERE {candidate_where_clause}
             ORDER BY distance
             LIMIT %s
         )
@@ -63,7 +78,7 @@ def semantic_search(
         FROM matches
         JOIN log_entries le
             ON le.normalized_message = matches.normalized_message
-        {where_clause}
+        {result_where_clause}
         ORDER BY matches.distance, le.log_timestamp NULLS LAST, le.line_id
         LIMIT %s
     """

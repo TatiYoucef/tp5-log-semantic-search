@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-VENV_PATH="${VENV_PATH:-$HOME/Desktop/Old_ESI/Python/venv}"
+VENV_PATH="${VENV_PATH:-$HOME/Desktop/tp5-log-semantic-search/venv}"
 
 if [ ! -x "$VENV_PATH/bin/python" ]; then
   echo "Erreur: environnement virtuel introuvable: $VENV_PATH"

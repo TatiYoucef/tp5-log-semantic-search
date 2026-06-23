@@ -232,10 +232,18 @@ La vectorisation est realisee avec Sentence-Transformers. La commande
 \texttt{tp5-log-search embed} charge le modele, recupere les messages normalises distincts non encore
 vectorises, calcule les embeddings par lots, puis les insere dans la table \texttt{message\_embeddings}.
 
-Cette approche est volontaire. Dans OpenSSH, beaucoup de lignes partagent le meme template. Calculer
-et stocker un embedding duplique pour chaque ligne brute gaspillerait du temps CPU et de l'espace
-disque sans ajouter beaucoup de signal semantique. En vectorisant les templates normalises, les
-638 947 logs restent recherchables par jointure avec une table vectorielle compacte et indexee.
+Cette approche est volontaire : la table vectorielle ne contient pas un vecteur par ligne brute,
+mais un vecteur par message normalise distinct, generalement issu du template LogHub. Les lignes
+brutes restent toutes conservees dans \texttt{log\_entries} et gardent leurs timestamps, niveaux,
+identifiants, hote et message original. La liaison entre une ligne et son vecteur se fait par
+\texttt{normalized\_message}.
+
+Ce choix est adapte aux logs structures. Dans OpenSSH, beaucoup de lignes partagent le meme template
+et ne different que par des valeurs variables comme l'adresse IP, le port ou le nom d'utilisateur.
+Calculer et stocker un embedding duplique pour chaque ligne brute gaspillerait du temps CPU et de
+l'espace disque sans ajouter beaucoup de signal semantique. En vectorisant les templates
+normalises, les 638 947 logs restent recherchables par jointure avec une table vectorielle compacte
+et indexee, tout en conservant la possibilite d'afficher chaque occurrence originale.
 
 Les vecteurs sont normalises cote modele. La similarite retournee par l'API est :
 

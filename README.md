@@ -20,13 +20,13 @@ Technologies imposees et utilisees : Python, Apache Spark, PostgreSQL, pgvector,
 ```bash
 ./setup.sh
 docker compose up -d
-source ~/Desktop/Old_ESI/Python/venv/bin/activate
+source venv/bin/activate
 ```
 
-Le script utilise par defaut le venv existant `~/Desktop/Old_ESI/Python/venv`; il ne cree pas de nouvel environnement. Installation manuelle equivalente :
+Le script utilise par defaut le venv du projet `./venv`; il ne cree pas de nouvel environnement. Installation manuelle equivalente :
 
 ```bash
-source ~/Desktop/Old_ESI/Python/venv/bin/activate
+source venv/bin/activate
 python -m pip install -r requirements.txt
 python -m pip install -e .
 cp -n .env.example .env
