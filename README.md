@@ -55,9 +55,12 @@ tp5-log-search load-db
 tp5-log-search embed
 tp5-log-search index
 tp5-log-search stats
+tp5-log-search benchmark --query "failed password invalid user"
 ```
 
 La commande `embed` vectorise les messages normalises distincts avec `sentence-transformers/all-MiniLM-L6-v2` dans la table `message_embeddings`. Les logs massifs restent dans `log_entries` et sont relies aux vecteurs par `normalized_message`, ce qui evite de dupliquer le meme vecteur des milliers de fois.
+
+La commande `benchmark` affiche les metriques de volume, taille disque, derniers temps de pipeline, latence de requete et qualite top-k. La qualite top-k est un score proxy base sur la similarite moyenne et la concentration des resultats autour des memes evenements/templates.
 
 ## API et interface
 
@@ -78,6 +81,8 @@ Endpoints principaux :
 ```text
 GET  /health
 GET  /stats
+GET  /benchmark
+POST /benchmark/query
 POST /search/semantic
 POST /search/keyword
 POST /search/compare
@@ -92,6 +97,7 @@ GET  /analytics/timeline
 src/tp5_log_search/
   api.py             API FastAPI
   analytics.py       analyses recurrentes et temporelles
+  benchmarks.py      metriques de performance et qualite top-k
   cli.py             commandes reproductibles
   config.py          configuration .env
   db.py              PostgreSQL, COPY, index pgvector

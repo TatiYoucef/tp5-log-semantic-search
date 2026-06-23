@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .benchmarks import query_benchmark, storage_metrics, timed_call
 from .config import PROJECT_ROOT, load_settings
 from .db import database_stats, init_database, load_processed_data, record_pipeline_run, refresh_vector_index
 from .embeddings import generate_embeddings
@@ -33,32 +34,64 @@ def cmd_load_db(args: argparse.Namespace) -> None:
 
 def cmd_embed(args: argparse.Namespace) -> None:
     settings = load_settings()
-    result = generate_embeddings(settings=settings, batch_size=args.batch_size, limit_texts=args.limit_texts)
+    result, elapsed = timed_call(
+        lambda: generate_embeddings(settings=settings, batch_size=args.batch_size, limit_texts=args.limit_texts)
+    )
+    result["embedding_seconds"] = round(elapsed, 3)
     _print_dict(result)
 
 
 def cmd_index(args: argparse.Namespace) -> None:
-    refresh_vector_index()
-    print("Index vectoriel HNSW reconstruit.")
+    _, elapsed = timed_call(lambda: refresh_vector_index())
+    print(f"Index vectoriel HNSW reconstruit en {elapsed:.3f}s.")
 
 
 def cmd_stats(args: argparse.Namespace) -> None:
     _print_dict(database_stats())
 
 
+def cmd_benchmark(args: argparse.Namespace) -> None:
+    settings = load_settings()
+    result = storage_metrics(settings)
+    if args.query:
+        result["query"] = query_benchmark(
+            args.query,
+            top_k=args.top_k,
+            level=None if args.level == "ALL" else args.level,
+            settings=settings,
+        )
+    _print_dict(result)
+
+
 def cmd_run_pipeline(args: argparse.Namespace) -> None:
     command = "run-pipeline"
+    timings: dict[str, float] = {}
+    total_start = None
     try:
-        init_database()
-        prepared = prepare_dataset(limit=args.limit, partitions=args.partitions)
-        loaded = load_processed_data(reset=True)
-        embedded = generate_embeddings(batch_size=args.batch_size)
-        refresh_vector_index()
-        details = {"prepared": prepared.__dict__, "loaded": loaded, "embedded": embedded}
+        from time import perf_counter
+
+        total_start = perf_counter()
+        _, elapsed = timed_call(lambda: init_database())
+        timings["init_db"] = round(elapsed, 3)
+        prepared, elapsed = timed_call(lambda: prepare_dataset(limit=args.limit, partitions=args.partitions))
+        timings["prepare_data"] = round(elapsed, 3)
+        loaded, elapsed = timed_call(lambda: load_processed_data(reset=True))
+        timings["load_db"] = round(elapsed, 3)
+        embedded, elapsed = timed_call(lambda: generate_embeddings(batch_size=args.batch_size))
+        timings["embed"] = round(elapsed, 3)
+        _, elapsed = timed_call(lambda: refresh_vector_index())
+        timings["index"] = round(elapsed, 3)
+        timings["total"] = round(perf_counter() - total_start, 3)
+        details = {"prepared": prepared.__dict__, "loaded": loaded, "embedded": embedded, "timings": timings}
         record_pipeline_run(command, "SUCCESS", details)
         _print_dict(details)
     except Exception as exc:
-        record_pipeline_run(command, "FAILED", {"error": str(exc)})
+        details = {"error": str(exc), "timings": timings}
+        if total_start is not None:
+            from time import perf_counter
+
+            details["timings"]["total_until_failure"] = round(perf_counter() - total_start, 3)
+        record_pipeline_run(command, "FAILED", details)
         raise
 
 
@@ -122,6 +155,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     stats = subparsers.add_parser("stats", help="Afficher les statistiques de la base")
     stats.set_defaults(func=cmd_stats)
+
+    benchmark = subparsers.add_parser("benchmark", help="Afficher les metriques de benchmark")
+    benchmark.add_argument("--query", default=None, help="Requete optionnelle pour mesurer la latence")
+    benchmark.add_argument("--top-k", type=int, default=20)
+    benchmark.add_argument("--level", default="ALL", choices=["ALL", "CRITICAL", "ERROR", "WARNING", "INFO"])
+    benchmark.set_defaults(func=cmd_benchmark)
 
     pipeline = subparsers.add_parser("run-pipeline", help="Executer tout le pipeline")
     pipeline.add_argument("--limit", type=int, default=None)
