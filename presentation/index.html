@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TP5 - Recherche semantique sur logs massifs</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main id="deck" class="deck">
+      <section class="slide title-slide">
+        <div>
+          <p class="eyebrow">TP5 Big Data</p>
+          <h1>Moteur de recherche semantique et analytique sur des logs massifs</h1>
+          <p class="subtitle">Apache Spark - PostgreSQL/pgvector - Sentence-Transformers - FastAPI - Streamlit</p>
+        </div>
+        <footer>
+          <span>Tati Youcef</span>
+          <span>Mostefai Mounir Sofiane</span>
+          <span>2025-2026</span>
+        </footer>
+      </section>
+
+      <section class="slide">
+        <p class="eyebrow">Contexte</p>
+        <h2>Problematique</h2>
+        <div class="two-col">
+          <div>
+            <p>
+              Les systemes distribues generent des volumes importants de logs textuels. Une recherche
+              par mots-cles reste limitee lorsque les memes incidents sont formules differemment.
+            </p>
+            <ul>
+              <li>Volume recommande par le sujet : au moins 500 000 entrees.</li>
+              <li>Besoin : retrouver des messages similaires, pas seulement identiques.</li>
+              <li>Objectif : combiner recherche semantique et analyse operationnelle.</li>
+            </ul>
+          </div>
+          <div class="callout">
+            <strong>Question centrale</strong>
+            <p>Comment transformer des logs massifs en une base interrogeable par similarite semantique et par analyses temporelles ?</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide">
+        <p class="eyebrow">Objectifs du projet</p>
+        <h2>Fonctionnalites attendues</h2>
+        <div class="cards three">
+          <article>
+            <h3>Pipeline Big Data</h3>
+            <p>Ingestion, nettoyage, normalisation et partitionnement avec Apache Spark.</p>
+          </article>
+          <article>
+            <h3>Recherche vectorielle</h3>
+            <p>Generation d'embeddings, stockage dans pgvector et index HNSW.</p>
+          </article>
+          <article>
+            <h3>Analytique</h3>
+            <p>Erreurs frequentes, logs similaires, evolution temporelle et comparaison mots-cles.</p>
+          </article>
+        </div>
+        <div class="checklist">
+          <span>Code source documente</span>
+          <span>Base vectorielle indexee</span>
+          <span>Rapport technique</span>
+          <span>Interface de demonstration</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <p class="eyebrow">Dataset</p>
+        <h2>OpenSSH - LogHub 2.0</h2>
+        <div class="metric-grid">
+          <div><strong>638 947</strong><span>logs bruts</span></div>
+          <div><strong>38</strong><span>evenements LogHub</span></div>
+          <div><strong>41</strong><span>messages normalises distincts</span></div>
+          <div><strong>2024</strong><span>annee configurable</span></div>
+        </div>
+        <pre><code>Dec 10 06:55:48 LabSZ sshd[24200]:
+Failed password for invalid user webmaster from 173.234.31.186 port 38926 ssh2</code></pre>
+        <p>
+          Le dataset contient les logs bruts, un CSV structure avec <code>EventId</code> et
+          <code>EventTemplate</code>, ainsi qu'une table de templates et occurrences.
+        </p>
+      </section>
+
+      <section class="slide">
+        <p class="eyebrow">Architecture</p>
+        <h2>Chaine de traitement</h2>
+        <div class="pipeline">
+          <span>Logs OpenSSH</span>
+          <span>Spark preprocessing</span>
+          <span>CSV + Parquet</span>
+          <span>PostgreSQL + pgvector</span>
+          <span>FastAPI</span>
+          <span>Streamlit</span>
+        </div>
+        <div class="two-col">
+          <ul>
+            <li>Spark parse les prefixes syslog et joint les fichiers LogHub.</li>
+            <li>PostgreSQL conserve les logs nettoyes et les metadonnees.</li>
+            <li>pgvector indexe les embeddings par distance cosinus.</li>
+          </ul>
+          <ul>
+            <li>FastAPI expose un contrat applicatif reutilisable.</li>
+            <li>Streamlit consomme uniquement l'API.</li>
+            <li>La CLI rend le pipeline reproductible.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="slide">
+        <p class="eyebrow">Pretraitement Spark</p>
+        <h2>Nettoyage et structuration</h2>
+        <div class="cards">
+          <article>
+            <h3>Parsing</h3>
+            <p>Extraction de la date, heure, hote, service, PID et contenu metier.</p>
+          </article>
+          <article>
+            <h3>Normalisation</h3>
+            <p>Utilisation des templates LogHub pour reduire le bruit des IP, ports et utilisateurs.</p>
+          </article>
+          <article>
+            <h3>Partitionnement</h3>
+            <p>Sortie Parquet partitionnee par niveau : INFO, WARNING, ERROR, CRITICAL.</p>
+          </article>
+        </div>
+        <p class="note">
+          Le CSV traite sert au chargement rapide par <code>COPY</code>, tandis que le Parquet reste
+          disponible pour des analyses batch supplementaires.
+        </p>
+      </section>
+
+      <section class="slide">
+        <p class="eyebrow">Base de donnees</p>
+        <h2>Schema PostgreSQL + pgvector</h2>
+        <div class="two-col">
+          <div>
+            <ul>
+              <li><code>log_entries</code> : toutes les lignes de logs nettoyees.</li>
+              <li><code>event_templates</code> : templates LogHub et occurrences.</li>
+              <li><code>message_embeddings</code> : embeddings des messages normalises distincts.</li>
+              <li><code>pipeline_runs</code> : traces d'execution du pipeline.</li>
+            </ul>
+          </div>
+          <div class="callout">
+            <strong>Index vectoriel</strong>
+            <pre><code>CREATE INDEX ... USING hnsw
+(embedding vector_cosine_ops);</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide">
+        <p class="eyebrow">Vectorisation</p>
+        <h2>Un vecteur par message normalise</h2>
+        <div class="two-col">
+          <div>
+            <p>
+              Les embeddings ne sont pas stockes pour chaque ligne brute. Ils sont calcules pour les
+              messages normalises distincts, puis relies aux logs par <code>normalized_message</code>.
+            </p>
+            <ul>
+              <li>Reduction forte du cout de calcul.</li>
+              <li>Conservation de toutes les occurrences originales.</li>
+              <li>Recherche toujours possible sur les 638 947 logs.</li>
+            </ul>
+          </div>
+          <div class="formula">
+            <span>similarite</span>
+            <strong>1 - distance_cosinus</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide screenshot-slide">
+        <p class="eyebrow">Demonstration</p>
+        <h2>Recherche semantique</h2>
+        <img src="assets/screenshots/02_semantic_search_results.png" alt="Recherche semantique" />
+      </section>
+
+      <section class="slide screenshot-slide">
+        <p class="eyebrow">Baseline</p>
+        <h2>Comparaison semantique / mots-cles</h2>
+        <img src="assets/screenshots/03_semantic_keyword_comparison.png" alt="Comparaison semantique mots-cles" />
+      </section>
+
+      <section class="slide screenshot-slide">
+        <p class="eyebrow">Analyse</p>
+        <h2>Erreurs recurrentes et evolution temporelle</h2>
+        <img src="assets/screenshots/05_analytics.png" alt="Analytique des erreurs" />
+      </section>
+
+      <section class="slide">
+        <p class="eyebrow">Benchmarks</p>
+        <h2>Mesures ajoutees</h2>
+        <div class="metric-grid">
+          <div><strong>100%</strong><span>couverture vectorisee</span></div>
+          <div><strong>HNSW</strong><span>index de similarite</span></div>
+          <div><strong>latence</strong><span>semantique et mots-cles</span></div>
+          <div><strong>coherence</strong><span>score top-k proxy</span></div>
+        </div>
+        <div class="formula wide">
+          <span>coherence top-k</span>
+          <strong>0.65 x similarite moyenne + 0.35 x part de l'evenement dominant</strong>
+        </div>
+        <p class="note">
+          Ce score n'est pas une precision supervisee : il complete l'analyse qualitative lorsque le
+          dataset ne fournit pas de labels de pertinence par requete.
+        </p>
+      </section>
+
+      <section class="slide screenshot-slide">
+        <p class="eyebrow">Comparaison de modeles</p>
+        <h2>MiniLM, Multi-QA MiniLM et MPNet</h2>
+        <img src="assets/screenshots/07_model_comparison.png" alt="Comparaison de modeles" />
+      </section>
+
+      <section class="slide">
+        <p class="eyebrow">Validation</p>
+        <h2>Couverture des exigences</h2>
+        <div class="cards two">
+          <article>
+            <h3>Cas pratiques imposes</h3>
+            <ul>
+              <li>Logs similaires a une erreur critique.</li>
+              <li>Groupes d'erreurs frequentes.</li>
+              <li>Evolution temporelle des erreurs similaires.</li>
+              <li>Comparaison avec recherche par mots-cles.</li>
+            </ul>
+          </article>
+          <article>
+            <h3>Verification technique</h3>
+            <ul>
+              <li>Pipeline complet sur 638 947 logs.</li>
+              <li>Base pgvector indexee.</li>
+              <li>API et interface operationnelles.</li>
+              <li>Tests unitaires : 10 passes.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="slide">
+        <p class="eyebrow">Conclusion</p>
+        <h2>Apports du projet</h2>
+        <div class="two-col">
+          <ul>
+            <li>Architecture Big Data complete et reproductible.</li>
+            <li>Recherche semantique appliquee a des logs massifs.</li>
+            <li>Stockage vectoriel indexe avec PostgreSQL et pgvector.</li>
+            <li>Analyse des erreurs recurrentes et de leur evolution.</li>
+          </ul>
+          <div class="callout">
+            <strong>Perspectives</strong>
+            <p>
+              Ajouter des labels de pertinence, evaluer plus de datasets LogHub et combiner recherche
+              lexicale et vectorielle dans un score hybride.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <nav class="controls" aria-label="Navigation">
+      <button id="prev" type="button">Precedent</button>
+      <span id="counter"></span>
+      <button id="next" type="button">Suivant</button>
+    </nav>
+    <script src="deck.js"></script>
+  </body>
+</html>
