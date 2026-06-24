@@ -1,18 +1,24 @@
 \documentclass[12pt,a4paper]{article}
 
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
+\usepackage{fontspec}
 \usepackage{geometry}
 \usepackage{hyperref}
 \usepackage{booktabs}
 \usepackage{longtable}
 \usepackage{xcolor}
 \usepackage{listings}
+\usepackage{graphicx}
+\usepackage{microtype}
+\usepackage[font=small,labelfont=bf]{caption}
 
 \geometry{margin=2.4cm}
+\setmainfont{Latin Modern Roman}
+\setsansfont{Latin Modern Sans}
+\setmonofont{Latin Modern Mono}
 \hypersetup{colorlinks=true, linkcolor=black, urlcolor=blue}
 \setlength{\parskip}{0.45em}
 \setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{2em}
 
 \lstset{
   basicstyle=\ttfamily\small,
@@ -47,6 +53,20 @@
 \newpage
 \pagenumbering{arabic}
 
+\begin{abstract}
+Ce rapport présente la conception et la réalisation d'une plateforme Big Data de recherche
+sémantique appliquée aux logs OpenSSH de LogHub-2.0. La solution combine Apache Spark pour le
+prétraitement batch, PostgreSQL avec pgvector pour le stockage vectoriel indexé,
+Sentence-Transformers pour la représentation sémantique, FastAPI pour l'exposition des services et
+Streamlit pour la démonstration interactive. Le système traite 638 947 entrées, fournit une
+recherche sémantique, une recherche lexicale de référence, l'identification de groupes d'erreurs
+récurrentes, l'analyse temporelle et une évaluation comparative de plusieurs modèles
+d'embeddings.
+\end{abstract}
+
+\textbf{Mots-clés :} Big Data, logs, recherche semantique, pgvector, Apache Spark,
+Sentence-Transformers, analyse d'erreurs.
+
 \section{Introduction}
 
 Les infrastructures modernes produisent des volumes importants de journaux d'execution. Dans un
@@ -62,7 +82,7 @@ L'objectif n'est pas seulement de lancer un modele d'embedding, mais de construi
 complete, reproductible et demonstrable.
 
 Les livrables couverts sont le code source documente, un pipeline Big Data fonctionnel, une base
-vectorielle indexee, un rapport technique et une interface web professionnelle. La solution reste
+vectorielle indexee, un rapport technique et une interface de demonstration. La solution reste
 entierement open source et respecte les technologies imposees : Python, Apache Spark, PostgreSQL,
 pgvector et Sentence-Transformers.
 
@@ -197,7 +217,7 @@ qualite du parsing fourni par LogHub.
 
 Le chargement PostgreSQL utilise \texttt{COPY} plutot que des insertions ligne par ligne. Pour un
 dataset de plusieurs centaines de milliers de lignes, cette difference est importante : \texttt{COPY}
-reduira le temps de chargement et limite la charge cote client Python. Les commandes peuvent etre
+reduit le temps de chargement et limite la charge cote client Python. Les commandes peuvent etre
 relancees car le pipeline initialise le schema puis recharge les tables applicatives de maniere
 deterministe.
 
@@ -222,9 +242,9 @@ semantique, mais elle reste pertinente pour des investigations precises. Par exe
 ou un port doit etre retrouve lexicalement. La comparaison entre les deux methodes montre donc leur
 complementarite.
 
-Le dernier choix est de fournir une API en plus de l'interface. Une interface Streamlit seule aurait
-ete plus rapide a ecrire, mais moins propre architecturalement. Avec FastAPI, la demonstration web,
-les tests et d'eventuels clients externes consomment le meme contrat.
+Le dernier choix est de fournir une API en plus de l'interface. Cette separation explicite le
+contrat applicatif et evite de coupler l'interface utilisateur aux details SQL. Avec FastAPI, la
+demonstration web, les tests et d'eventuels clients externes consomment le meme contrat.
 
 \section{Vectorisation}
 
@@ -289,14 +309,16 @@ proches, puis calcule leur evolution sur l'ensemble de la base.
 
 \section{Interface de demonstration}
 
-L'interface Streamlit est organisee en quatre onglets : recherche, comparaison, logs similaires et
-analytique. Elle consomme l'API FastAPI et n'accede jamais directement a la base. Cette separation
-est importante pour garder une architecture claire et testable.
+L'interface Streamlit est organisee en cinq onglets : recherche, comparaison, logs similaires,
+analytique et benchmarks. Elle consomme l'API FastAPI et n'accede jamais directement a la base.
+Cette separation est importante pour garder une architecture claire et testable.
 
-La page d'accueil affiche les indicateurs principaux : nombre total de logs, nombre de logs
-vectorises, nombre d'evenements et presence de l'index HNSW. Les tableaux de resultats affichent les
+La page d'accueil affiche les indicateurs principaux : nombre total de logs, couverture de
+vectorisation, nombre d'evenements et periode observee. Les tableaux de resultats affichent les
 identifiants de logs, timestamps, niveaux, evenements, similarites et messages bruts. Les analyses
-recurrences et temporelles utilisent des graphiques Plotly.
+recurrences et temporelles utilisent des graphiques Plotly. L'onglet benchmarks complete la
+demonstration avec les tailles disque, la latence des requetes, un score de coherence top-k et une
+comparaison de plusieurs modeles Sentence-Transformers.
 
 \section{Reproductibilite}
 
@@ -309,6 +331,8 @@ tp5-log-search load-db
 tp5-log-search embed
 tp5-log-search index
 tp5-log-search stats
+tp5-log-search benchmark --query "failed password invalid user"
+tp5-log-search compare-models --query "authentication failure"
 \end{lstlisting}
 
 Pour une demonstration rapide, l'option \texttt{--limit} permet de traiter un sous-ensemble :
@@ -332,12 +356,15 @@ L'API FastAPI constitue le contrat applicatif entre la base vectorielle et les c
 concue pour exposer des operations simples, chacune correspondant a un besoin du sujet. La table
 suivante resume les endpoints principaux.
 
-\begin{longtable}{p{0.30\linewidth}p{0.58\linewidth}}
+\begin{longtable}{p{0.37\linewidth}p{0.51\linewidth}}
 \toprule
 Endpoint & Fonction\\
 \midrule
 \texttt{GET /health} & Verification de disponibilite de l'API.\\
 \texttt{GET /stats} & Statistiques globales : logs, vecteurs, evenements, periode, index.\\
+\texttt{GET /benchmark} & Volumes, tailles disque et informations de benchmark globales.\\
+\texttt{POST /benchmark/query} & Latence semantique/mots-cles et coherence top-k pour une requete.\\
+\texttt{POST /benchmark/models} & Comparaison de plusieurs modeles semantiques sur les memes templates.\\
 \texttt{POST /search/semantic} & Recherche par similarite vectorielle a partir d'une requete libre.\\
 \texttt{POST /search/keyword} & Recherche lexicale par mots-cles pour comparaison.\\
 \texttt{POST /search/compare} & Retour simultane des resultats semantiques et lexicaux.\\
@@ -355,10 +382,46 @@ Les requetes applicatives acceptent un parametre \texttt{top\_k}. Celui-ci borne
 resultats retournes afin d'eviter des reponses trop volumineuses. Les filtres par niveau permettent
 de limiter la recherche a des logs critiques, erreurs, avertissements ou informations.
 
+\section{Evaluation des performances et comparaison de modeles}
+
+Le projet integre un module d'evaluation des performances afin de quantifier le comportement de la solution. Les
+metriques exposees sont le nombre de logs, le nombre de messages vectorises distincts, la taille de
+la base PostgreSQL, la taille de la table de logs, la taille de l'index HNSW, la latence de recherche
+semantique, la latence de recherche par mots-cles et un score de coherence top-k.
+
+La coherence top-k n'est pas une precision supervisee, car le dataset ne fournit pas de labels de
+pertinence pour chaque requete. C'est un indicateur proxy defini par :
+
+\begin{lstlisting}
+coherence = 0.65 * similarite_moyenne + 0.35 * part_evenement_dominant
+\end{lstlisting}
+
+Il favorise donc les resultats a la fois proches de la requete et concentres autour du meme
+evenement LogHub. Dans ce contexte, cet indicateur complete l'observation qualitative des resultats
+retournes sans se substituer a une evaluation annotee.
+
+Une comparaison de modeles complete cette evaluation. Les modeles compares sont
+\texttt{all-MiniLM-L6-v2}, \texttt{multi-qa-MiniLM-L6-cos-v1} et
+\texttt{all-mpnet-base-v2}. La comparaison est faite en memoire sur les memes messages normalises
+distincts, car \texttt{all-mpnet-base-v2} produit des vecteurs de dimension 768 alors que l'index
+pgvector de production est defini en \texttt{vector(384)} pour le modele MiniLM. Cette approche
+permet de comparer la coherence, la similarite moyenne, la latence et la dimension sans casser la
+base vectorielle indexee.
+
+\begin{longtable}{p{0.36\linewidth}p{0.15\linewidth}p{0.39\linewidth}}
+\toprule
+Modele & Dimension & Role dans l'evaluation\\
+\midrule
+\texttt{all-MiniLM-L6-v2} & 384 & Modele de production, compact et compatible avec l'index pgvector.\\
+\texttt{multi-qa-MiniLM-L6-cos-v1} & 384 & Modele optimise pour questions/reponses et similarite cosinus.\\
+\texttt{all-mpnet-base-v2} & 768 & Modele plus lourd, souvent plus expressif mais plus couteux.\\
+\bottomrule
+\end{longtable}
+
 \section{Scenario de demonstration}
 
-Une demonstration complete peut etre realisee en quatre temps. D'abord, l'enseignant ou
-l'utilisateur lance PostgreSQL avec Docker Compose et execute le pipeline limite pour verifier le
+Une demonstration complete peut etre realisee en quatre temps. D'abord, l'evaluateur lance
+PostgreSQL avec Docker Compose et execute le pipeline limite pour verifier le
 fonctionnement sur un echantillon. Ensuite, il lance l'API et l'interface Streamlit. L'interface
 affiche immediatement les statistiques de la base et la presence de l'index.
 
@@ -381,6 +444,31 @@ Enfin, l'onglet comparaison affiche cote a cote la recherche semantique et la re
 mots-cles. Cette comparaison illustre l'interet des embeddings : la recherche semantique peut
 retrouver des messages proches meme lorsque le vocabulaire exact differe, tandis que la recherche
 par mots-cles reste utile pour des termes precis comme une adresse IP ou un nom d'utilisateur.
+L'onglet benchmarks montre ensuite les metriques de taille, latence, coherence top-k et comparaison
+des trois modeles semantiques.
+
+\begin{figure}[p]
+  \centering
+  \begin{minipage}{0.48\linewidth}
+    \includegraphics[width=\linewidth]{screenshots/02_semantic_search_results.png}
+    \begin{center}\small Recherche semantique\end{center}
+  \end{minipage}\hfill
+  \begin{minipage}{0.48\linewidth}
+    \includegraphics[width=\linewidth]{screenshots/03_semantic_keyword_comparison.png}
+    \begin{center}\small Comparaison semantique/mots-cles\end{center}
+  \end{minipage}
+
+  \vspace{0.4cm}
+  \begin{minipage}{0.48\linewidth}
+    \includegraphics[width=\linewidth]{screenshots/05_analytics.png}
+    \begin{center}\small Analytique des erreurs\end{center}
+  \end{minipage}\hfill
+  \begin{minipage}{0.48\linewidth}
+    \includegraphics[width=\linewidth]{screenshots/07_model_comparison.png}
+    \begin{center}\small Comparaison de modeles\end{center}
+  \end{minipage}
+\caption{Extraits de l'interface de demonstration.}
+\end{figure}
 
 \section{Evaluation attendue}
 
@@ -401,6 +489,8 @@ La performance depend de la machine. Le pretraitement Spark du dataset complet r
 un poste local. La vectorisation par templates distincts reduit fortement le temps de calcul, car
 elle evite de traiter plusieurs centaines de milliers de messages quasi identiques. La recherche
 pgvector avec HNSW permet ensuite une latence compatible avec une demonstration interactive.
+Les mesures ajoutees permettent de documenter cette performance avec des chiffres reproductibles
+depuis l'API, la CLI ou l'interface web.
 
 \section{Tests et validation}
 
@@ -418,6 +508,7 @@ Les criteres d'acceptation sont :
   \item l'index HNSW existe sur la table \texttt{message\_embeddings} ;
   \item une requete semantique retourne des messages OpenSSH coherents ;
   \item la comparaison mots-cles/semantique retourne deux listes distinctes ;
+  \item l'onglet benchmarks affiche latence, tailles disque, coherence top-k et comparaison de modeles ;
   \item l'interface web communique avec l'API locale ;
   \item le rapport compile en PDF avec LaTeX.
 \end{itemize}
