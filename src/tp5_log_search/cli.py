@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .benchmarks import query_benchmark, storage_metrics, timed_call
+from .benchmarks import compare_semantic_models, query_benchmark, storage_metrics, timed_call
 from .config import PROJECT_ROOT, load_settings
 from .db import database_stats, init_database, load_processed_data, record_pipeline_run, refresh_vector_index
 from .embeddings import generate_embeddings
@@ -60,6 +60,17 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
             level=None if args.level == "ALL" else args.level,
             settings=settings,
         )
+    _print_dict(result)
+
+
+def cmd_compare_models(args: argparse.Namespace) -> None:
+    result = compare_semantic_models(
+        args.query,
+        top_k=args.top_k,
+        level=None if args.level == "ALL" else args.level,
+        models=args.models,
+        candidate_limit=args.candidate_limit,
+    )
     _print_dict(result)
 
 
@@ -161,6 +172,14 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--top-k", type=int, default=20)
     benchmark.add_argument("--level", default="ALL", choices=["ALL", "CRITICAL", "ERROR", "WARNING", "INFO"])
     benchmark.set_defaults(func=cmd_benchmark)
+
+    compare_models = subparsers.add_parser("compare-models", help="Comparer plusieurs modeles semantiques")
+    compare_models.add_argument("--query", default="failed password invalid user")
+    compare_models.add_argument("--top-k", type=int, default=10)
+    compare_models.add_argument("--level", default="ALL", choices=["ALL", "CRITICAL", "ERROR", "WARNING", "INFO"])
+    compare_models.add_argument("--candidate-limit", type=int, default=500)
+    compare_models.add_argument("--models", nargs="*", default=None)
+    compare_models.set_defaults(func=cmd_compare_models)
 
     pipeline = subparsers.add_parser("run-pipeline", help="Executer tout le pipeline")
     pipeline.add_argument("--limit", type=int, default=None)

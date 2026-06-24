@@ -1,4 +1,9 @@
-from tp5_log_search.benchmarks import top_k_quality
+from tp5_log_search.benchmarks import normalize_model_name, top_k_quality
+
+
+def test_normalize_model_name_accepts_short_names() -> None:
+    assert normalize_model_name("all-MiniLM-L6-v2") == "sentence-transformers/all-MiniLM-L6-v2"
+    assert normalize_model_name("custom/model") == "custom/model"
 
 
 def test_top_k_quality_scores_similarity_and_event_concentration() -> None:

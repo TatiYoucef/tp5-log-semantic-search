@@ -11,6 +11,11 @@ import streamlit as st
 
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
 LEVELS = ["ALL", "CRITICAL", "ERROR", "WARNING", "INFO"]
+MODEL_OPTIONS = [
+    "all-MiniLM-L6-v2",
+    "multi-qa-MiniLM-L6-cos-v1",
+    "all-mpnet-base-v2",
+]
 
 
 def _format_bytes(value: int | float | None) -> str:
@@ -54,7 +59,7 @@ def _api_get(path: str, params: dict[str, Any] | None = None) -> Any:
 
 
 def _api_post(path: str, payload: dict[str, Any]) -> Any:
-    with httpx.Client(timeout=120.0) as client:
+    with httpx.Client(timeout=300.0) as client:
         response = client.post(f"{API_URL}{path}", json=payload)
         response.raise_for_status()
         return response.json()
@@ -169,20 +174,12 @@ def main() -> None:
         benchmark = _api_get("/benchmark")
         counts = benchmark["counts"]
         storage = benchmark["storage"]
-        latest_pipeline = benchmark.get("latest_pipeline")
 
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Embeddings", _format_number(counts["embedding_rows"]))
         col2.metric("Base", _format_bytes(storage["database_bytes"]))
         col3.metric("Log table", _format_bytes(storage["log_entries_bytes"]))
         col4.metric("HNSW size", _format_bytes(storage["hnsw_index_bytes"]))
-
-        timings = latest_pipeline.get("timings_seconds", {}) if latest_pipeline else {}
-        time_cols = st.columns(4)
-        time_cols[0].metric("Embedding time", _format_seconds(timings.get("embed")))
-        time_cols[1].metric("Indexing time", _format_seconds(timings.get("index")))
-        time_cols[2].metric("Load time", _format_seconds(timings.get("load_db")))
-        time_cols[3].metric("Pipeline time", _format_seconds(timings.get("total")))
 
         query_col, level_col, k_col = st.columns([3, 1, 1])
         bench_query = query_col.text_input("Benchmark query", value="failed password invalid user")
@@ -209,6 +206,62 @@ def main() -> None:
             detail_cols[1].metric("Event share", f"{quality['dominant_event_share']:.2f}")
             detail_cols[2].metric("Distinct events", _format_number(quality["distinct_events"]))
             detail_cols[3].metric("Semantic results", _format_number(result["semantic_result_count"]))
+
+        st.divider()
+        st.subheader("Model comparison")
+        model_query_col, model_level_col, model_k_col = st.columns([3, 1, 1])
+        model_query = model_query_col.text_input("Model query", value="failed password invalid user")
+        model_level = model_level_col.selectbox("Model level", LEVELS, key="model_compare_level")
+        model_k = model_k_col.slider("Model top-k", 3, 30, 10, key="model_compare_k")
+        selected_models = st.multiselect("Models", MODEL_OPTIONS, default=MODEL_OPTIONS)
+        candidate_limit = st.slider("Candidate templates", 10, 1000, 500, step=10)
+
+        if not selected_models:
+            st.warning("Selectionne au moins un modele.")
+        elif st.button("Comparer les modeles", key="compare_models"):
+            comparison = _api_post(
+                "/benchmark/models",
+                {
+                    "query": model_query,
+                    "top_k": model_k,
+                    "level": None if model_level == "ALL" else model_level,
+                    "candidate_limit": candidate_limit,
+                    "models": selected_models,
+                },
+            )
+            model_rows = comparison["models"]
+            summary_df = pd.DataFrame(
+                [
+                    {
+                        "model": row["model"].replace("sentence-transformers/", ""),
+                        "dimension": row["dimension"],
+                        "latency_ms": row["latency_ms"],
+                        "coherence": row["top_k_coherence"],
+                        "avg_similarity": row["average_similarity"],
+                        "dominant_event": row["dominant_event_id"],
+                        "event_share": row["dominant_event_share"],
+                        "distinct_events": row["distinct_events"],
+                    }
+                    for row in model_rows
+                ]
+            )
+            st.dataframe(summary_df, use_container_width=True, hide_index=True)
+            chart_left, chart_right = st.columns(2)
+            with chart_left:
+                st.plotly_chart(
+                    px.bar(summary_df, x="model", y="coherence", color="model"),
+                    use_container_width=True,
+                )
+            with chart_right:
+                st.plotly_chart(
+                    px.bar(summary_df, x="model", y="latency_ms", color="model"),
+                    use_container_width=True,
+                )
+
+            with st.expander("Top results by model"):
+                for row in model_rows:
+                    st.markdown(f"**{row['model'].replace('sentence-transformers/', '')}**")
+                    st.dataframe(pd.DataFrame(row["top_results"]), use_container_width=True, hide_index=True)
 
 
 if __name__ == "__main__":

@@ -56,11 +56,14 @@ tp5-log-search embed
 tp5-log-search index
 tp5-log-search stats
 tp5-log-search benchmark --query "failed password invalid user"
+tp5-log-search compare-models --query "authentication failure"
 ```
 
 La commande `embed` vectorise les messages normalises distincts avec `sentence-transformers/all-MiniLM-L6-v2` dans la table `message_embeddings`. Les logs massifs restent dans `log_entries` et sont relies aux vecteurs par `normalized_message`, ce qui evite de dupliquer le meme vecteur des milliers de fois.
 
 La commande `benchmark` affiche les metriques de volume, taille disque, derniers temps de pipeline, latence de requete et qualite top-k. La qualite top-k est un score proxy base sur la similarite moyenne et la concentration des resultats autour des memes evenements/templates.
+
+La commande `compare-models` compare `all-MiniLM-L6-v2`, `multi-qa-MiniLM-L6-cos-v1` et `all-mpnet-base-v2` sur les memes messages/templates normalises. Cette comparaison est faite en memoire afin de supporter aussi `all-mpnet-base-v2`, dont les vecteurs ont 768 dimensions alors que l'index pgvector de production utilise `vector(384)`.
 
 ## API et interface
 
@@ -83,6 +86,7 @@ GET  /health
 GET  /stats
 GET  /benchmark
 POST /benchmark/query
+POST /benchmark/models
 POST /search/semantic
 POST /search/keyword
 POST /search/compare

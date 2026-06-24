@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from collections import Counter
+from functools import lru_cache
+import os
 from time import perf_counter
 from typing import Any, Callable, TypeVar
+
+import numpy as np
 
 from .config import Settings, load_settings
 from .db import connect, database_stats
@@ -11,12 +15,35 @@ from .search import keyword_search, semantic_search
 
 
 T = TypeVar("T")
+DEFAULT_COMPARISON_MODELS = (
+    "sentence-transformers/all-MiniLM-L6-v2",
+    "sentence-transformers/multi-qa-MiniLM-L6-cos-v1",
+    "sentence-transformers/all-mpnet-base-v2",
+)
+MODEL_ALIASES = {
+    "all-MiniLM-L6-v2": "sentence-transformers/all-MiniLM-L6-v2",
+    "multi-qa-MiniLM-L6-cos-v1": "sentence-transformers/multi-qa-MiniLM-L6-cos-v1",
+    "all-mpnet-base-v2": "sentence-transformers/all-mpnet-base-v2",
+}
 
 
 def timed_call(call: Callable[[], T]) -> tuple[T, float]:
     start = perf_counter()
     result = call()
     return result, perf_counter() - start
+
+
+def normalize_model_name(model_name: str) -> str:
+    return MODEL_ALIASES.get(model_name, model_name)
+
+
+@lru_cache(maxsize=4)
+def _load_sentence_transformer(model_name: str):
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+
+    from sentence_transformers import SentenceTransformer
+
+    return SentenceTransformer(model_name, device="cpu")
 
 
 def storage_metrics(settings: Settings | None = None) -> dict[str, Any]:
@@ -135,4 +162,132 @@ def query_benchmark(
         "semantic_result_count": len(semantic_rows),
         "keyword_result_count": len(keyword_rows),
         "top_k_quality": top_k_quality(semantic_rows),
+    }
+
+
+def _comparison_candidates(
+    top_k: int,
+    level: str | None = None,
+    candidate_limit: int = 500,
+    settings: Settings | None = None,
+) -> list[dict[str, Any]]:
+    settings = settings or load_settings()
+    params: list[Any] = []
+    where = ""
+    if level and level != "ALL":
+        where = "WHERE level = %s"
+        params.append(level)
+    params.append(max(candidate_limit, top_k))
+
+    with connect(settings) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT
+                    normalized_message,
+                    MIN(event_id) AS event_id,
+                    MIN(level) AS level,
+                    COUNT(*) AS occurrences
+                FROM log_entries
+                {where}
+                GROUP BY normalized_message
+                ORDER BY COUNT(*) DESC
+                LIMIT %s
+                """,
+                params,
+            )
+            return [
+                {
+                    "normalized_message": row[0],
+                    "event_id": row[1],
+                    "level": row[2],
+                    "occurrences": row[3],
+                }
+                for row in cur.fetchall()
+            ]
+
+
+def compare_semantic_models(
+    query: str,
+    top_k: int = 10,
+    level: str | None = None,
+    models: list[str] | None = None,
+    candidate_limit: int = 500,
+    batch_size: int = 64,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """Compare plusieurs Sentence-Transformers sans dependance a la dimension pgvector."""
+
+    settings = settings or load_settings()
+    selected_models = [normalize_model_name(model) for model in (models or list(DEFAULT_COMPARISON_MODELS))]
+    candidates = _comparison_candidates(
+        top_k=top_k,
+        level=level,
+        candidate_limit=candidate_limit,
+        settings=settings,
+    )
+    texts = [candidate["normalized_message"] for candidate in candidates]
+    results = []
+
+    for model_name in selected_models:
+        started = perf_counter()
+        model = _load_sentence_transformer(model_name)
+        load_ready = perf_counter()
+        if texts:
+            text_vectors = model.encode(
+                texts,
+                batch_size=batch_size,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+            query_vector = model.encode(
+                [query],
+                batch_size=1,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )[0]
+            scores = np.asarray(text_vectors) @ np.asarray(query_vector)
+            order = np.argsort(-scores)[:top_k]
+        else:
+            text_vectors = np.empty((0, 0))
+            scores = np.asarray([])
+            order = np.asarray([], dtype=int)
+
+        rows = [
+            {
+                "event_id": candidates[index]["event_id"],
+                "level": candidates[index]["level"],
+                "normalized_message": candidates[index]["normalized_message"],
+                "occurrences": candidates[index]["occurrences"],
+                "similarity": round(float(scores[index]), 4),
+            }
+            for index in order
+        ]
+        finished = perf_counter()
+        quality = top_k_quality(rows)
+        dimension = int(text_vectors.shape[1]) if len(text_vectors) else None
+
+        results.append(
+            {
+                "model": model_name,
+                "dimension": dimension,
+                "candidate_count": len(candidates),
+                "load_seconds": round(load_ready - started, 3),
+                "latency_ms": round((finished - started) * 1000, 2),
+                "top_k_coherence": quality["score"],
+                "average_similarity": quality["average_similarity"],
+                "dominant_event_id": quality["dominant_event_id"],
+                "dominant_event_share": quality["dominant_event_share"],
+                "distinct_events": quality["distinct_events"],
+                "top_results": rows,
+            }
+        )
+
+    return {
+        "query": query,
+        "top_k": top_k,
+        "level": level or "ALL",
+        "candidate_limit": candidate_limit,
+        "models": results,
+        "note": "In-memory comparison over distinct normalized messages/templates; pgvector remains indexed with the configured production model.",
     }

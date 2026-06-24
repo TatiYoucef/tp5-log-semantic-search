@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .analytics import frequent_errors, stats, timeline
-from .benchmarks import query_benchmark, storage_metrics
+from .benchmarks import DEFAULT_COMPARISON_MODELS, compare_semantic_models, query_benchmark, storage_metrics
 from .config import load_settings
 from .embeddings import EmbeddingService
 from .search import compare_search, keyword_search, semantic_search, similar_logs
@@ -28,6 +28,14 @@ class BenchmarkRequest(BaseModel):
     query: str = Field(default="failed password invalid user", min_length=1)
     top_k: int = Field(default=20, ge=1, le=200)
     level: str | None = None
+
+
+class ModelComparisonRequest(BaseModel):
+    query: str = Field(default="failed password invalid user", min_length=1)
+    top_k: int = Field(default=10, ge=1, le=50)
+    level: str | None = None
+    candidate_limit: int = Field(default=500, ge=10, le=5000)
+    models: list[str] = Field(default_factory=lambda: list(DEFAULT_COMPARISON_MODELS))
 
 
 @lru_cache(maxsize=1)
@@ -71,6 +79,18 @@ def post_query_benchmark(request: BenchmarkRequest):
         level=request.level,
         settings=get_settings(),
         embedder=get_embedder(),
+    )
+
+
+@app.post("/benchmark/models")
+def post_model_comparison(request: ModelComparisonRequest):
+    return compare_semantic_models(
+        request.query,
+        top_k=request.top_k,
+        level=request.level,
+        candidate_limit=request.candidate_limit,
+        models=request.models,
+        settings=get_settings(),
     )
 
 
