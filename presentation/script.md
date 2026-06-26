@@ -1,46 +1,267 @@
-# Script de presentation
+# Script de présentation TP5 - 15 minutes
 
-## Slide 1 - Titre
-Bonjour, nous presentons notre projet TP5 : un moteur de recherche semantique et analytique sur des logs massifs. L'objectif est de montrer une chaine complete Big Data, depuis l'ingestion des logs jusqu'a la recherche semantique, l'analyse et la demonstration web.
+Objectif : 5 minutes de slides, puis 10 minutes de démonstration. Le ton doit rester clair et
+direct : expliquer le problème, montrer que la chaîne fonctionne, puis prouver l'intérêt de la
+recherche sémantique avec l'interface.
 
-## Slide 2 - Problematique
-Les logs generes par les systemes distribues sont nombreux et difficiles a exploiter uniquement avec des mots-cles. Deux messages peuvent decrire le meme probleme avec des formulations differentes. Notre objectif est donc de construire un systeme capable de retrouver des logs similaires par leur sens, puis d'analyser les erreurs recurrentes.
+## Avant de commencer
 
-## Slide 3 - Objectifs
-Le sujet impose Python, Spark, PostgreSQL avec pgvector et Sentence-Transformers. Notre solution couvre ces exigences avec un pipeline de pretraitement Spark, une base vectorielle indexee, une API, une interface Streamlit et un rapport technique. Nous avons aussi ajoute des benchmarks et une comparaison de modeles.
+À lancer avant la soutenance :
 
-## Slide 4 - Dataset
-Nous avons utilise le dataset OpenSSH de LogHub 2.0. Il contient 638 947 logs bruts, donc plus que le seuil demande de 500 000 entrees. Le dataset fournit aussi des fichiers structures avec des identifiants d'evenements et des templates, ce qui est tres utile pour normaliser les messages.
+```bash
+source venv/bin/activate
+docker compose up -d
+tp5-log-search serve-api --host 127.0.0.1 --port 8000
+tp5-log-search serve-web --port 8501
+```
 
-## Slide 5 - Architecture
-L'architecture suit une chaine batch classique : logs OpenSSH, pretraitement Spark, export CSV et Parquet, chargement dans PostgreSQL avec pgvector, exposition par FastAPI, puis interface Streamlit. Cette separation rend le projet reproductible et plus facile a tester.
+Ouvrir ensuite :
 
-## Slide 6 - Pretraitement Spark
-Spark lit les logs bruts, extrait les champs syslog comme la date, l'hote, le service et le PID, puis joint ces informations avec le CSV structure de LogHub. Le resultat est sauvegarde en CSV pour PostgreSQL et en Parquet partitionne par niveau de severite.
+```text
+Slides : presentation/index.html
+Démo   : http://127.0.0.1:8501
+API    : http://127.0.0.1:8000/docs
+```
 
-## Slide 7 - Base de donnees
-La base contient les logs nettoyes, les templates d'evenements, les embeddings et les traces d'execution du pipeline. L'index principal est un index HNSW pgvector sur la colonne embedding, avec une distance cosinus.
+## Partie 1 - Slides, 5 minutes
 
-## Slide 8 - Vectorisation
-Nous ne stockons pas un vecteur par ligne brute. Nous stockons un vecteur par message normalise distinct, souvent base sur le template LogHub. Les 638 947 lignes restent conservees dans log_entries et sont reliees au vecteur par normalized_message. Cela reduit fortement le cout de calcul sans perdre les occurrences originales.
+### Slide 1 - Titre, 30 secondes
 
-## Slide 9 - Recherche semantique
-Ici, une requete comme "failed password for invalid user" retourne des logs pertinents meme si les valeurs variables changent, comme les utilisateurs, les adresses IP ou les ports. La similarite affichee vient de la distance cosinus entre le vecteur de la requete et les vecteurs indexes.
+Bonjour, nous présentons notre TP5 : un moteur de recherche sémantique et analytique sur des logs
+massifs. Le projet couvre toute la chaîne demandée : ingestion Big Data avec Spark, stockage dans
+PostgreSQL avec pgvector, génération d'embeddings avec Sentence-Transformers, puis exposition par
+FastAPI et Streamlit.
 
-## Slide 10 - Comparaison avec mots-cles
-La comparaison montre la difference entre recherche semantique et recherche lexicale. La recherche par mots-cles reste utile pour une IP ou un identifiant exact, mais la recherche semantique est plus adaptee pour retrouver des messages proches par le sens.
+Transition : je commence par le problème que nous avons voulu résoudre.
 
-## Slide 11 - Analytique
-L'onglet analytique identifie les groupes d'erreurs frequentes et permet de suivre leur evolution temporelle. Cela repond aux cas pratiques demandes : identifier les groupes d'erreurs et analyser leur evolution dans le temps.
+### Slide 2 - Problème et objectif, 45 secondes
 
-## Slide 12 - Benchmarks
-Nous avons ajoute des metriques de benchmark : nombre d'embeddings, tailles disque, latence de recherche semantique, latence de recherche par mots-cles et coherence top-k. La coherence top-k est un indicateur proxy qui combine similarite moyenne et concentration autour du meme evenement.
+Les systèmes distribués produisent beaucoup de logs. Une recherche classique par mots-clés est utile,
+mais elle reste limitée : deux logs peuvent parler du même incident avec des IP, ports ou utilisateurs différents. L'objectif est donc de ne pas chercher seulement les mots exacts, mais le sens du message.
+Nous voulons retrouver les logs similaires, comparer cette approche aux mots-clés et analyser les erreurs récurrentes.
 
-## Slide 13 - Comparaison de modeles
-Nous comparons trois modeles : all-MiniLM-L6-v2, multi-qa-MiniLM-L6-cos-v1 et all-mpnet-base-v2. La comparaison est faite en memoire parce que MPNet produit des vecteurs de dimension 768, alors que l'index de production utilise vector(384). On compare donc dimension, latence, coherence et similarite moyenne.
+Transition : pour cela, il fallait d'abord un volume réaliste de données.
 
-## Slide 14 - Validation
-La solution couvre les cas pratiques imposes : retrouver des logs similaires a une erreur critique, identifier des groupes d'erreurs frequentes, analyser l'evolution temporelle et comparer avec une recherche par mots-cles. Le pipeline complet a ete execute sur 638 947 logs et les tests unitaires passent.
+### Slide 3 - Données et architecture, 50 secondes
 
-## Slide 15 - Conclusion
-En conclusion, le projet fournit une chaine complete et modulaire : Spark pour le batch, PostgreSQL et pgvector pour la recherche vectorielle, Sentence-Transformers pour les embeddings, FastAPI pour l'API et Streamlit pour la demonstration. Les perspectives seraient d'ajouter une evaluation annotee, de tester d'autres datasets LogHub et de construire une recherche hybride lexical-vectorielle.
+Nous avons utilisé le dataset OpenSSH de LogHub 2.0, avec 638 947 logs bruts, donc plus que le seuil de 500 000 entrées demandé. Les logs passent d'abord par Spark pour le nettoyage et la structuration.
+Les sorties sont stockées en CSV et Parquet, puis chargées dans PostgreSQL. pgvector gère la partie
+vectorielle, FastAPI expose les endpoints, et Streamlit sert d'interface de démonstration. La CLI rend
+les étapes reproductibles.
+
+Transition : je détaille maintenant le traitement technique.
+
+### Slide 4 - Pipeline technique, 45 secondes
+
+Cette slide résume les trois étapes techniques principales. D'abord, Spark parse les préfixes syslog,
+nettoie les messages et fait la jointure avec les templates LogHub. Ensuite, la partie embeddings
+calcule un vecteur pour chaque message normalisé distinct avec le modèle all-MiniLM-L6-v2, au lieu de
+répéter le même calcul pour chaque occurrence brute. Enfin, pgvector stocke ces vecteurs dans
+PostgreSQL et accélère la recherche avec un index HNSW. Le score affiché dans l'application est une
+similarité : 1 moins la distance cosinus.
+
+Transition : ce pipeline devient visible dans l'interface.
+
+### Slide 5 - Interface de démonstration, 40 secondes
+
+L'interface Streamlit permet de tester la recherche sémantique, la comparaison avec les mots-clés, les logs voisins, les analyses temporelles et les benchmarks. Ce screenshot montre une requête sur les échecs d'authentification SSH : les résultats remontent des logs proches même si les valeurs concrètes changent.
+
+Transition : nous avons aussi vérifié que les exigences du sujet sont couvertes.
+
+### Slide 6 - Résultats et validation, 45 secondes
+
+Le projet couvre les cas pratiques demandés : trouver les logs similaires à une erreur critique,
+identifier les groupes d'erreurs fréquentes, suivre leur évolution temporelle et comparer la recherche
+sémantique avec la recherche par mots-clés. 
+Côté technique, le pipeline a été exécuté sur les 638 947 logs, la base pgvector est indexée, l'API et l'interface fonctionnent, et les tests unitaires passent.
+Nous avons ajouté des benchmarks de latence et un score proxy de cohérence top-k.
+
+Transition : je vais maintenant montrer ces points dans la démo.
+
+### Slide 7 - Scénario de démo, 35 secondes
+
+La démonstration suit trois étapes. 
+D'abord, je montre l'état du système avec les métriques globales.
+Ensuite, je teste la recherche : sémantique, mots-clés et logs similaires. 
+Enfin, je montre l'analyse :
+erreurs fréquentes, timeline et benchmarks.
+
+Transition : après la démo, je reviendrai à la conclusion.
+
+### Slide 8 - Conclusion, 30 secondes
+
+En résumé, le projet apporte une chaîne complète : Spark pour traiter le volume, PostgreSQL et
+pgvector pour chercher efficacement, Sentence-Transformers pour capturer le sens, et une interface
+web pour exploiter les résultats. Les perspectives sont d'ajouter des labels de pertinence, de tester
+d'autres datasets LogHub et d'aller vers une recherche hybride qui combine mots-clés et vecteurs.
+
+Transition vers la démo : maintenant je passe à l'application.
+
+## Partie 2 - Démonstration, 10 minutes
+
+### 0:00 à 1:00 - Démarrage et état global
+
+À montrer :
+
+- La page Streamlit `http://127.0.0.1:8501`.
+- Les métriques en haut : nombre de logs, couverture, nombre d'événements, période.
+- Expliquer que l'interface consomme l'API FastAPI et ne lit pas directement la base.
+
+Phrase à dire :
+
+Nous sommes sur l'interface Streamlit. En haut, on voit que la base contient les logs traités, que les
+messages normalisés sont couverts par les embeddings, et que l'on peut explorer le dataset sans
+manipuler SQL directement. L'application appelle l'API FastAPI, ce qui sépare bien la logique backend
+de l'interface.
+
+### 1:00 à 3:00 - Recherche sémantique
+
+Onglet : `Recherche`
+
+Requête :
+
+```text
+failed password for invalid user
+```
+
+Paramètres conseillés :
+
+```text
+Niveau : ALL ou ERROR
+Résultats : 20
+```
+
+À montrer :
+
+- Lancer la recherche.
+- Lire les colonnes `level`, `event_id`, `similarity` et `raw_message`.
+- Expliquer que les résultats peuvent changer dans les valeurs, mais garder le même sens.
+
+Phrase à dire :
+
+Ici, je cherche une idée : un échec de mot de passe pour un utilisateur invalide. La base ne compare
+pas seulement les mots de la requête. Elle transforme la requête en vecteur, puis cherche les messages
+normalisés les plus proches dans pgvector. Le score affiché est une similarité dérivée de la distance
+cosinus.
+
+### 3:00 à 4:30 - Comparaison avec les mots-clés
+
+Onglet : `Comparaison`
+
+Requête :
+
+```text
+brute force ssh authentication failure
+```
+
+À montrer :
+
+- Lancer la comparaison.
+- Comparer la colonne de gauche `Sémantique` et la colonne de droite `Mots-clés`.
+- Dire quand les mots-clés restent utiles.
+
+Phrase à dire :
+
+La recherche par mots-clés reste très utile pour une IP, un identifiant exact ou une chaîne précise.
+Mais sur une requête plus générale, comme une tentative de brute force SSH, la recherche sémantique
+peut retrouver des messages proches même quand les mots exacts ne sont pas tous présents. C'est
+l'intérêt principal du modèle d'embeddings.
+
+### 4:30 à 5:45 - Logs similaires
+
+Onglet : `Logs similaires`
+
+À faire :
+
+- Saisir la requête `wrong password` dans `Recherche texte`.
+- Cliquer sur `Rechercher des logs`.
+- Sélectionner une ligne dans le tableau `Résultats de recherche`.
+- Montrer le panneau `Log de départ`.
+- Cliquer sur `Chercher les similarités`.
+- Montrer le tableau `Logs voisins`.
+
+Phrase à dire :
+
+Cette étape part d'une requête simple, par exemple "wrong password". L'application affiche d'abord
+des logs trouvés par recherche sémantique. Ensuite, je sélectionne explicitement une ligne du tableau :
+ce log devient le log de départ. On voit son ID, son niveau, son événement, son score et son message
+complet. Puis on lance la recherche de similarités pour afficher les logs voisins. C'est utile pour
+regrouper des occurrences d'un même problème ou retrouver des variantes du même événement dans le
+dataset.
+
+### 5:45 à 7:15 - Analytique : erreurs fréquentes et timeline
+
+Onglet : `Analytique`
+
+À montrer :
+
+- À gauche : groupes récurrents, idéalement filtrer sur `ERROR` si le graphique est trop large.
+- À droite : timeline avec la requête suivante.
+
+```text
+failed password invalid user
+```
+
+Phrase à dire :
+
+La partie analytique répond au besoin opérationnel : au lieu de lire les logs ligne par ligne, on
+observe les groupes d'erreurs les plus fréquents. Ensuite, avec la timeline, on peut suivre l'évolution
+d'une famille d'erreurs dans le temps. Cela aide à détecter des pics, par exemple une période avec
+beaucoup d'échecs d'authentification.
+
+### 7:15 à 9:40 - Benchmark des modèles
+
+Onglet : `Benchmarks`
+
+Requête :
+
+```text
+failed password invalid user
+```
+
+À montrer :
+
+- Garder les trois modèles sélectionnés.
+- Cliquer sur `Benchmarker les modèles`.
+- Lire le tableau comparatif : dimension, latence, cohérence top-k et similarité moyenne.
+- Montrer les deux graphiques : cohérence et latence.
+- Ouvrir `Top résultats par modèle` si le temps le permet.
+
+Phrase à dire :
+
+Dans cet onglet, on benchmarke les trois modèles en même temps sur la même requête. Le modèle de
+production est MiniLM en 384 dimensions, adapté à l'index pgvector actuel. MPNet a une dimension plus
+grande, donc cette comparaison se fait en mémoire. On compare la latence, la dimension, la similarité
+moyenne et la cohérence top-k. La cohérence n'est pas une précision supervisée : c'est un score proxy
+qui combine similarité moyenne et concentration autour du même événement. L'objectif est de montrer
+le compromis entre qualité et coût.
+
+### 9:40 à 10:00 - Fermeture de la démo
+
+Phrase à dire :
+
+La démonstration montre donc la chaîne complète : données traitées, recherche sémantique, baseline
+par mots-clés, analyse temporelle et benchmarks. On peut revenir au slide de conclusion.
+
+## Questions probables
+
+### Pourquoi ne pas vectoriser les 638 947 lignes ?
+
+Parce que beaucoup de lignes partagent le même template ou le même message normalisé. Vectoriser les
+messages distincts réduit le coût de calcul et de stockage, tout en conservant toutes les occurrences
+dans la table `log_entries`.
+
+### Pourquoi pgvector ?
+
+pgvector permet de garder la recherche vectorielle dans PostgreSQL, avec les métadonnées relationnelles
+et un index HNSW. Cela évite d'ajouter un moteur vectoriel séparé pour ce TP.
+
+### Quelle est la limite de la comparaison de modèles ?
+
+Le dataset ne fournit pas de labels de pertinence par requête. La cohérence top-k est donc un indicateur
+proxy, pas une mesure supervisée définitive.
+
+### Que faire si la démo prend du retard ?
+
+Priorité : montrer `Recherche`, `Comparaison`, puis `Analytique`. Les benchmarks peuvent être résumés
+à partir des métriques déjà visibles si le temps est court.

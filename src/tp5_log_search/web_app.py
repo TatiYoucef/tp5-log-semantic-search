@@ -78,6 +78,36 @@ def _results_table(rows: list[dict[str, Any]]) -> None:
     st.dataframe(df[visible], use_container_width=True, hide_index=True)
 
 
+def _candidate_rows(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    records: list[dict[str, Any]] = []
+    for index, row in enumerate(rows, start=1):
+        records.append(
+            {
+                "rang": index,
+                "id": row.get("id"),
+                "date": str(row.get("log_timestamp") or "").replace("T", " "),
+                "niveau": row.get("level"),
+                "event": row.get("event_id"),
+                "similarite": row.get("similarity"),
+                "message": row.get("raw_message"),
+            }
+        )
+    return pd.DataFrame(records)
+
+
+def _selected_log_panel(row: dict[str, Any]) -> None:
+    with st.container(border=True):
+        st.subheader("Log de depart")
+        meta_cols = st.columns(4)
+        meta_cols[0].metric("ID", _format_number(row.get("id")))
+        meta_cols[1].metric("Niveau", row.get("level") or "-")
+        meta_cols[2].metric("Evenement", row.get("event_id") or "-")
+        meta_cols[3].metric("Similarite", f"{row['similarity']:.2f}" if row.get("similarity") is not None else "-")
+        st.write(row.get("raw_message") or "-")
+        if row.get("event_template"):
+            st.caption(f"Template: {row['event_template']}")
+
+
 def main() -> None:
     st.set_page_config(page_title="TP5 Logs OpenSSH", layout="wide")
     st.title("TP5 - Logs OpenSSH")
@@ -127,15 +157,72 @@ def main() -> None:
                 _results_table(data["keyword"])
 
     with tabs[2]:
-        id_col, k_col = st.columns([1, 1])
-        log_id = id_col.number_input("Identifiant du log", min_value=1, value=1, step=1)
-        similar_k = k_col.slider("Logs voisins", 5, 100, 20, key="similar_k")
-        if st.button("Trouver les voisins"):
-            try:
-                rows = _api_get(f"/logs/{int(log_id)}/similar", {"top_k": similar_k})
-                _results_table(rows)
-            except httpx.HTTPStatusError as exc:
-                st.error(exc.response.json().get("detail", str(exc)))
+        search_col, level_col, k_col = st.columns([3, 1, 1])
+        seed_query = search_col.text_input("Recherche texte", value="wrong password")
+        seed_level = level_col.selectbox("Niveau", LEVELS, key="similar_seed_level")
+        candidate_k = k_col.slider("Resultats", 5, 50, 10, key="similar_candidate_k")
+
+        if st.button("Rechercher des logs", type="primary"):
+            st.session_state.pop("similar_reference", None)
+            st.session_state.pop("similar_neighbors", None)
+            st.session_state["similar_candidates"] = _api_post(
+                "/search/semantic",
+                {
+                    "query": seed_query,
+                    "top_k": candidate_k,
+                    "level": None if seed_level == "ALL" else seed_level,
+                },
+            )
+
+        candidates = st.session_state.get("similar_candidates", [])
+        selected_log: dict[str, Any] | None = None
+        if candidates:
+            st.subheader("Resultats de recherche")
+            selection = st.dataframe(
+                _candidate_rows(candidates),
+                use_container_width=True,
+                hide_index=True,
+                height=300,
+                on_select="rerun",
+                selection_mode="single-row",
+                column_config={
+                    "rang": st.column_config.NumberColumn("Rang", width="small"),
+                    "id": st.column_config.NumberColumn("ID", width="small"),
+                    "date": st.column_config.TextColumn("Date", width="medium"),
+                    "niveau": st.column_config.TextColumn("Niveau", width="small"),
+                    "event": st.column_config.TextColumn("Event", width="small"),
+                    "similarite": st.column_config.NumberColumn("Similarite", format="%.3f", width="small"),
+                    "message": st.column_config.TextColumn("Message", width="large"),
+                },
+            )
+            selected_rows = selection.selection.rows
+            if selected_rows:
+                selected_log = candidates[selected_rows[0]]
+                st.session_state["similar_reference"] = selected_log
+            else:
+                selected_log = st.session_state.get("similar_reference")
+                st.info("Selectionne une ligne dans le tableau pour choisir le log de depart.")
+        elif "similar_candidates" in st.session_state:
+            st.info("Aucun resultat.")
+
+        selected_log = selected_log or st.session_state.get("similar_reference")
+        if selected_log:
+            _selected_log_panel(selected_log)
+            action_col, k_col = st.columns([1, 3])
+            similar_k = k_col.slider("Nombre de voisins", 5, 100, 20, key="similar_k")
+            if action_col.button("Chercher les similarites", type="primary"):
+                try:
+                    st.session_state["similar_neighbors"] = _api_get(
+                        f"/logs/{int(selected_log['id'])}/similar",
+                        {"top_k": similar_k},
+                    )
+                except httpx.HTTPStatusError as exc:
+                    st.error(exc.response.json().get("detail", str(exc)))
+
+        neighbors = st.session_state.get("similar_neighbors", [])
+        if neighbors:
+            st.subheader("Logs voisins")
+            _results_table(neighbors)
 
     with tabs[3]:
         left, right = st.columns([1, 1])
@@ -171,54 +258,17 @@ def main() -> None:
                         st.dataframe(timeline_df, use_container_width=True, hide_index=True)
 
     with tabs[4]:
-        benchmark = _api_get("/benchmark")
-        counts = benchmark["counts"]
-        storage = benchmark["storage"]
-
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Embeddings", _format_number(counts["embedding_rows"]))
-        col2.metric("Base", _format_bytes(storage["database_bytes"]))
-        col3.metric("Log table", _format_bytes(storage["log_entries_bytes"]))
-        col4.metric("HNSW size", _format_bytes(storage["hnsw_index_bytes"]))
-
-        query_col, level_col, k_col = st.columns([3, 1, 1])
-        bench_query = query_col.text_input("Benchmark query", value="failed password invalid user")
-        bench_level = level_col.selectbox("Level", LEVELS, key="benchmark_level")
-        bench_k = k_col.slider("Top-k", 5, 100, 20, key="benchmark_k")
-        if st.button("Mesurer", key="run_benchmark"):
-            result = _api_post(
-                "/benchmark/query",
-                {"query": bench_query, "top_k": bench_k, "level": None if bench_level == "ALL" else bench_level},
-            )
-            quality = result["top_k_quality"]
-
-            latency_cols = st.columns(4)
-            latency_cols[0].metric("Semantic latency", f"{result['semantic_latency_ms']:.2f} ms")
-            latency_cols[1].metric("Keyword latency", f"{result['keyword_latency_ms']:.2f} ms")
-            latency_cols[2].metric("Top-k coherence", f"{quality['score']:.2f}")
-            latency_cols[3].metric("Avg similarity", f"{quality['average_similarity']:.2f}")
-
-            st.caption(
-                "Top-k coherence = 0.65 x average similarity + 0.35 x dominant event share."
-            )
-            detail_cols = st.columns(4)
-            detail_cols[0].metric("Dominant event", quality["dominant_event_id"] or "-")
-            detail_cols[1].metric("Event share", f"{quality['dominant_event_share']:.2f}")
-            detail_cols[2].metric("Distinct events", _format_number(quality["distinct_events"]))
-            detail_cols[3].metric("Semantic results", _format_number(result["semantic_result_count"]))
-
-        st.divider()
-        st.subheader("Model comparison")
+        st.subheader("Comparaison des modeles")
         model_query_col, model_level_col, model_k_col = st.columns([3, 1, 1])
-        model_query = model_query_col.text_input("Model query", value="failed password invalid user")
-        model_level = model_level_col.selectbox("Model level", LEVELS, key="model_compare_level")
-        model_k = model_k_col.slider("Model top-k", 3, 30, 10, key="model_compare_k")
-        selected_models = st.multiselect("Models", MODEL_OPTIONS, default=MODEL_OPTIONS)
-        candidate_limit = st.slider("Candidate templates", 10, 1000, 500, step=10)
+        model_query = model_query_col.text_input("Requete", value="failed password invalid user")
+        model_level = model_level_col.selectbox("Niveau", LEVELS, key="model_compare_level")
+        model_k = model_k_col.slider("Top-k", 3, 30, 10, key="model_compare_k")
+        selected_models = st.multiselect("Modeles", MODEL_OPTIONS, default=MODEL_OPTIONS)
+        candidate_limit = st.slider("Templates candidats", 10, 1000, 500, step=10)
 
         if not selected_models:
             st.warning("Selectionne au moins un modele.")
-        elif st.button("Comparer les modeles", key="compare_models"):
+        elif st.button("Benchmarker les modeles", type="primary", key="compare_models"):
             comparison = _api_post(
                 "/benchmark/models",
                 {
@@ -258,7 +308,7 @@ def main() -> None:
                     use_container_width=True,
                 )
 
-            with st.expander("Top results by model"):
+            with st.expander("Top resultats par modele"):
                 for row in model_rows:
                     st.markdown(f"**{row['model'].replace('sentence-transformers/', '')}**")
                     st.dataframe(pd.DataFrame(row["top_results"]), use_container_width=True, hide_index=True)
